@@ -1,0 +1,17 @@
+{
+  "parent_id": "panthera",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "panthera-leo",
+      "parent_id": "panthera",
+      "rank": "species",
+      "scientific_name": "Panthera leo",
+      "name_zh": "狮",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

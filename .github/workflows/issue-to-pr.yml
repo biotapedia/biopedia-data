@@ -1,0 +1,26 @@
+name: Convert taxon issue to PR
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  convert:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Create reviewable data PR
+        run: node scripts/issue-to-pr.mjs
+        env:
+          GH_TOKEN: ${{ github.token }}

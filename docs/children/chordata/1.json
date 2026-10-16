@@ -1,0 +1,17 @@
+{
+  "parent_id": "chordata",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "mammalia",
+      "parent_id": "chordata",
+      "rank": "class",
+      "scientific_name": "Mammalia",
+      "name_zh": "哺乳纲",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

@@ -1,0 +1,204 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
+export const PAGE_SIZE = 48;
+export const RANKS = new Set([
+  'domain', 'kingdom', 'subkingdom', 'phylum', 'subphylum', 'class',
+  'subclass', 'order', 'suborder', 'family', 'subfamily', 'tribe',
+  'genus', 'subgenus', 'species', 'subspecies', 'variety', 'form',
+  'clade', 'unranked'
+]);
+const REQUIRED = ['id', 'parent_id', 'rank', 'scientific_name', 'name_zh'];
+const OPTIONAL = ['image_url', 'image_credit', 'source_url'];
+
+export function parseTaxon(markdown, filename = 'unknown.md') {
+  const normalized = markdown.replace(/\r\n/g, '\n');
+  const match = normalized.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+  if (!match) throw new Error(`${filename}: missing front matter`);
+  const metadata = {};
+  for (const line of match[1].split('\n')) {
+    if (!line.trim()) continue;
+    const pair = line.match(/^([a-z_]+):\s*(.*)$/);
+    if (!pair) throw new Error(`${filename}: invalid metadata line: ${line}`);
+    const [, key, raw] = pair;
+    if (![...REQUIRED, ...OPTIONAL].includes(key) || key in metadata) {
+      throw new Error(`${filename}: unknown or repeated field: ${key}`);
+    }
+    try {
+      metadata[key] = JSON.parse(raw);
+    } catch {
+      throw new Error(`${filename}: ${key} must be a JSON string or null`);
+    }
+  }
+  for (const key of REQUIRED) {
+    if (!(key in metadata)) throw new Error(`${filename}: missing ${key}`);
+  }
+  const { id, parent_id: parentId, rank, scientific_name: scientificName, name_zh: nameZh } = metadata;
+  if (typeof id !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) {
+    throw new Error(`${filename}: invalid id`);
+  }
+  if (parentId !== null && (typeof parentId !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(parentId))) {
+    throw new Error(`${filename}: invalid parent_id`);
+  }
+  if (!RANKS.has(rank)) throw new Error(`${filename}: invalid rank: ${rank}`);
+  if (typeof scientificName !== 'string' || scientificName.length < 2 || scientificName.length > 160) {
+    throw new Error(`${filename}: invalid scientific_name`);
+  }
+  if (typeof nameZh !== 'string' || nameZh.length < 1 || nameZh.length > 120) {
+    throw new Error(`${filename}: invalid name_zh`);
+  }
+  for (const key of OPTIONAL) {
+    if (metadata[key] !== undefined && typeof metadata[key] !== 'string') {
+      throw new Error(`${filename}: ${key} must be a string`);
+    }
+  }
+  for (const key of ['image_url', 'source_url']) {
+    if (metadata[key] && !isHttpsUrl(metadata[key])) {
+      throw new Error(`${filename}: ${key} must be an HTTPS URL`);
+    }
+  }
+  if (metadata.image_url && !metadata.image_credit) {
+    throw new Error(`${filename}: image_credit is required with image_url`);
+  }
+  const body = match[2].trim();
+  if (body.length < 10) throw new Error(`${filename}: description is too short`);
+  return { ...metadata, body };
+}
+
+export function isHttpsUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !!url.hostname && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+export function loadTaxa(docsDirectory) {
+  const directory = path.join(docsDirectory, 'taxa');
+  const taxa = new Map();
+  for (const filename of fs.readdirSync(directory).filter(name => name.endsWith('.md')).sort()) {
+    const taxon = parseTaxon(fs.readFileSync(path.join(directory, filename), 'utf8'), filename);
+    if (filename !== `${taxon.id}.md`) throw new Error(`${filename}: filename must match id`);
+    if (taxa.has(taxon.id)) throw new Error(`${filename}: repeated id`);
+    taxa.set(taxon.id, taxon);
+  }
+  if (taxa.size === 0) throw new Error('No taxa found');
+  validateTree(taxa);
+  return taxa;
+}
+
+export function validateTree(taxa) {
+  for (const taxon of taxa.values()) {
+    if (taxon.parent_id !== null && !taxa.has(taxon.parent_id)) {
+      throw new Error(`${taxon.id}: unknown parent ${taxon.parent_id}`);
+    }
+    if (taxon.parent_id === taxon.id) throw new Error(`${taxon.id}: cannot parent itself`);
+  }
+  const visited = new Set();
+  const visiting = new Set();
+  function visit(id) {
+    if (visiting.has(id)) throw new Error(`${id}: taxonomy cycle`);
+    if (visited.has(id)) return;
+    visiting.add(id);
+    const parent = taxa.get(id).parent_id;
+    if (parent !== null) visit(parent);
+    visiting.delete(id);
+    visited.add(id);
+  }
+  for (const id of taxa.keys()) visit(id);
+}
+
+function serialize(value) {
+  return `${JSON.stringify(value, null, 2)}\n`;
+}
+
+export function expectedIndexes(taxa) {
+  const children = new Map();
+  children.set(null, []);
+  for (const taxon of taxa.values()) {
+    if (!children.has(taxon.id)) children.set(taxon.id, []);
+    if (!children.has(taxon.parent_id)) children.set(taxon.parent_id, []);
+    children.get(taxon.parent_id).push(taxon);
+  }
+  const listing = taxon => ({
+    id: taxon.id,
+    parent_id: taxon.parent_id,
+    rank: taxon.rank,
+    scientific_name: taxon.scientific_name,
+    name_zh: taxon.name_zh,
+    image_url: taxon.image_url || null,
+    child_count: children.get(taxon.id)?.length || 0
+  });
+  const sort = (a, b) => a.name_zh.localeCompare(b.name_zh, 'zh-Hans-CN') || a.id.localeCompare(b.id);
+  const output = new Map();
+  output.set('roots.json', serialize({ items: children.get(null).map(listing).sort(sort) }));
+  for (const taxon of taxa.values()) {
+    const items = children.get(taxon.id).map(listing).sort(sort);
+    const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
+    for (let page = 1; page <= pages; page++) {
+      output.set(`children/${taxon.id}/${page}.json`, serialize({
+        parent_id: taxon.id,
+        page,
+        total: items.length,
+        next: page < pages ? page + 1 : null,
+        items: items.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+      }));
+    }
+  }
+  return output;
+}
+
+function existingIndexFiles(docsDirectory) {
+  const found = new Set();
+  if (fs.existsSync(path.join(docsDirectory, 'roots.json'))) found.add('roots.json');
+  const base = path.join(docsDirectory, 'children');
+  if (!fs.existsSync(base)) return found;
+  function walk(directory) {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith('.json')) found.add(path.relative(docsDirectory, full));
+    }
+  }
+  walk(base);
+  return found;
+}
+
+export function syncIndexes(docsDirectory, { check = false } = {}) {
+  const expected = expectedIndexes(loadTaxa(docsDirectory));
+  const existing = existingIndexFiles(docsDirectory);
+  const errors = [];
+  for (const [relative, content] of expected) {
+    const target = path.join(docsDirectory, relative);
+    if (!fs.existsSync(target) || fs.readFileSync(target, 'utf8') !== content) {
+      if (check) errors.push(`stale or missing ${relative}`);
+      else {
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        fs.writeFileSync(target, content);
+      }
+    }
+  }
+  for (const relative of existing) {
+    if (!expected.has(relative)) {
+      if (check) errors.push(`obsolete ${relative}`);
+      else fs.unlinkSync(path.join(docsDirectory, relative));
+    }
+  }
+  if (errors.length) throw new Error(errors.join('\n'));
+  return { taxa: loadTaxa(docsDirectory).size, files: expected.size };
+}
+
+export function createTaxonMarkdown(input) {
+  const metadata = {
+    id: input.id,
+    parent_id: input.parent_id,
+    rank: input.rank,
+    scientific_name: input.scientific_name,
+    name_zh: input.name_zh,
+    image_url: input.image_url || '',
+    image_credit: input.image_credit || '',
+    source_url: input.source_url || ''
+  };
+  return `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${input.description.trim()}\n`;
+}

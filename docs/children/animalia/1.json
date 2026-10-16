@@ -1,0 +1,17 @@
+{
+  "parent_id": "animalia",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "chordata",
+      "parent_id": "animalia",
+      "rank": "phylum",
+      "scientific_name": "Chordata",
+      "name_zh": "脊索动物门",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

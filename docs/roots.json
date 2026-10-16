@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "id": "animalia",
+      "parent_id": null,
+      "rank": "kingdom",
+      "scientific_name": "Animalia",
+      "name_zh": "动物界",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "fungi",
+      "parent_id": null,
+      "rank": "kingdom",
+      "scientific_name": "Fungi",
+      "name_zh": "真菌界",
+      "image_url": null,
+      "child_count": 0
+    },
+    {
+      "id": "plantae",
+      "parent_id": null,
+      "rank": "kingdom",
+      "scientific_name": "Plantae",
+      "name_zh": "植物界",
+      "image_url": null,
+      "child_count": 0
+    }
+  ]
+}

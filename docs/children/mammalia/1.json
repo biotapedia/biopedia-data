@@ -1,0 +1,17 @@
+{
+  "parent_id": "mammalia",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "carnivora",
+      "parent_id": "mammalia",
+      "rank": "order",
+      "scientific_name": "Carnivora",
+      "name_zh": "食肉目",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

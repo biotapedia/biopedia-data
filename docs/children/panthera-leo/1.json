@@ -1,0 +1,17 @@
+{
+  "parent_id": "panthera-leo",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "panthera-leo-leo",
+      "parent_id": "panthera-leo",
+      "rank": "subspecies",
+      "scientific_name": "Panthera leo leo",
+      "name_zh": "北方狮亚种",
+      "image_url": null,
+      "child_count": 0
+    }
+  ]
+}

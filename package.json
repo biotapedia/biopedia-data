@@ -1,0 +1,13 @@
+{
+  "name": "biota-data",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "index": "node scripts/reindex.mjs",
+    "validate": "node scripts/reindex.mjs --check",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,62 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import test from 'node:test';
+import { createTaxonMarkdown, expectedIndexes, loadTaxa, parseTaxon, syncIndexes, validateTree } from '../scripts/catalog.mjs';
+import { parseIssueBody, prepareSubmission } from '../scripts/submission.mjs';
+
+const docs = path.resolve('docs');
+
+test('catalog supports optional intermediate ranks and subspecies', () => {
+  const taxa = loadTaxa(docs);
+  assert.equal(taxa.get('feliformia').rank, 'suborder');
+  assert.equal(taxa.get('panthera-leo-leo').rank, 'subspecies');
+  assert.equal(expectedIndexes(taxa).get('children/panthera-leo/1.json').includes('panthera-leo-leo'), true);
+});
+
+test('validation rejects a taxonomy cycle', () => {
+  const taxa = new Map([
+    ['a', { id: 'a', parent_id: 'b' }],
+    ['b', { id: 'b', parent_id: 'a' }]
+  ]);
+  assert.throws(() => validateTree(taxa), /cycle/);
+});
+
+test('generated indexes are current', () => {
+  assert.doesNotThrow(() => syncIndexes(docs, { check: true }));
+});
+
+test('issue payload becomes a validated Markdown taxon', () => {
+  const payload = {
+    parent_id: 'panthera',
+    rank: 'species',
+    scientific_name: 'Panthera testus',
+    name_zh: '测试豹',
+    image_url: '',
+    image_credit: '',
+    source_url: '',
+    description: '这是一段用于验证投稿转换流程的介绍，长度足以满足条目要求。'
+  };
+  const encoded = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const parsed = parseIssueBody(`投稿\n<!-- BIOTA_SUBMISSION_V1\n${encoded}\n-->`);
+  const result = prepareSubmission(parsed, 173, docs);
+  assert.equal(parseTaxon(result.markdown).id, 'submission-173');
+  assert.match(result.markdown, /parent_id: "panthera"/);
+});
+
+test('index checker detects stale child pages', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'biota-index-'));
+  try {
+    fs.mkdirSync(path.join(temp, 'taxa'));
+    fs.writeFileSync(path.join(temp, 'taxa', 'root.md'), createTaxonMarkdown({
+      id: 'root', parent_id: null, rank: 'kingdom', scientific_name: 'Rootus',
+      name_zh: '根节点', description: '这是一个用于验证索引更新的根节点示例。'
+    }));
+    syncIndexes(temp);
+    fs.writeFileSync(path.join(temp, 'roots.json'), '{}');
+    assert.throws(() => syncIndexes(temp, { check: true }), /stale/);
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
