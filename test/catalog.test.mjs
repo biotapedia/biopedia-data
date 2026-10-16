@@ -15,6 +15,23 @@ test('catalog supports optional intermediate ranks and subspecies', () => {
   assert.equal(expectedIndexes(taxa).get('children/panthera-leo/1.json').includes('panthera-leo-leo'), true);
 });
 
+test('large sibling groups are split into small pages', () => {
+  const taxa = new Map([['root', {
+    id: 'root', parent_id: null, rank: 'kingdom', scientific_name: 'Rootus', name_zh: '根'
+  }]]);
+  for (let index = 0; index < 49; index++) {
+    const id = `child-${index}`;
+    taxa.set(id, {
+      id, parent_id: 'root', rank: 'species',
+      scientific_name: `Species ${index}`, name_zh: `物种 ${index}`
+    });
+  }
+  const indexes = expectedIndexes(taxa);
+  assert.equal(JSON.parse(indexes.get('children/root/1.json')).items.length, 48);
+  assert.equal(JSON.parse(indexes.get('children/root/1.json')).next, 2);
+  assert.equal(JSON.parse(indexes.get('children/root/2.json')).items.length, 1);
+});
+
 test('validation rejects a taxonomy cycle', () => {
   const taxa = new Map([
     ['a', { id: 'a', parent_id: 'b' }],
@@ -43,6 +60,9 @@ test('issue payload becomes a validated Markdown taxon', () => {
   const result = prepareSubmission(parsed, 173, docs);
   assert.equal(parseTaxon(result.markdown).id, 'submission-173');
   assert.match(result.markdown, /parent_id: "panthera"/);
+  assert.throws(() => prepareSubmission({
+    ...payload, image_url: 'http://example.org/photo.jpg', image_credit: '摄影者'
+  }, 174, docs), /HTTPS/);
 });
 
 test('index checker detects stale child pages', () => {

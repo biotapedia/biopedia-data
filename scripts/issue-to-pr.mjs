@@ -43,6 +43,17 @@ if (existing.length) {
   console.log(`Already created: ${existing[0].url}`);
   process.exit(0);
 }
+const remoteBranch = run('git', ['ls-remote', '--heads', 'origin', branch]);
+if (remoteBranch) {
+  const url = run('gh', [
+    'pr', 'create', '--base', 'main', '--head', branch,
+    '--title', prepared.title,
+    '--body', `来自 #${issue.number} 的社区投稿。\n\n投稿者：@${issue.user.login}\n\n合并前请核对分类位置、文字内容、图片授权和资料来源。`
+  ]);
+  comment(`感谢投稿！资料已转换为待审核的 Pull Request：${url}`);
+  console.log(url);
+  process.exit(0);
+}
 run('git', ['config', 'user.name', 'github-actions[bot]']);
 run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com']);
 run('git', ['switch', '-c', branch]);
