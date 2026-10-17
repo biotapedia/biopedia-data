@@ -113,3 +113,27 @@ test('index checker detects stale child pages', () => {
     fs.rmSync(temp, { recursive: true, force: true });
   }
 });
+
+test('distribution accepts regions at any level but not a region inside a listed one', () => {
+  const markdown = distribution => createTaxonMarkdown({
+    id: 'sample', parent_id: null, rank: 'species', scientific_name: 'Samplus', name_zh: '样本',
+    distribution, description: '这是一个用于验证分布地区字段的示例条目。'
+  });
+  assert.deepEqual(parseTaxon(markdown(['tdwg-2', 'tdwg-36', 'fao-61'])).distribution, ['tdwg-2', 'tdwg-36', 'fao-61']);
+  assert.doesNotMatch(markdown([]), /distribution/);
+  assert.throws(() => parseTaxon(markdown(['tdwg-99'])), /unknown region/);
+  assert.throws(() => parseTaxon(markdown(['ocean-pacific', 'fao-61'])), /inside ocean-pacific/);
+  assert.throws(() => parseTaxon(markdown(['fao-61', 'fao-61'])), /repeated/);
+});
+
+test('submitted distribution is validated and written to the taxon', () => {
+  const payload = {
+    parent_id: 'panthera', rank: 'species', scientific_name: 'Panthera rangeus', name_zh: '测试分布豹',
+    image_url: '', image_credit: '', source_url: '', distribution: ['tdwg-41', 'tdwg-36'],
+    description: '这是一段用于验证投稿分布地区转换流程的介绍，长度足以满足条目要求。'
+  };
+  assert.match(prepareSubmission(payload, 301, docs).markdown, /distribution: \["tdwg-41","tdwg-36"\]/);
+  assert.doesNotMatch(prepareSubmission({ ...payload, distribution: [] }, 302, docs).markdown, /distribution/);
+  assert.throws(() => prepareSubmission({ ...payload, distribution: ['china'] }, 303, docs), /分布地区/);
+  assert.throws(() => prepareSubmission({ ...payload, distribution: 'tdwg-36' }, 304, docs), /分布地区/);
+});

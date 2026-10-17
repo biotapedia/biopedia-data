@@ -9,7 +9,9 @@ export const RANKS = new Set([
   'clade', 'unranked'
 ]);
 const REQUIRED = ['id', 'parent_id', 'rank', 'scientific_name', 'name_zh'];
-const OPTIONAL = ['image_url', 'image_credit', 'source_url'];
+const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution'];
+// Region id → parent id. Mirrors src/regions.js in the frontend; the map geometry uses the same ids.
+const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
 
 export function parseTaxon(markdown, filename = 'unknown.md') {
   const normalized = markdown.replace(/\r\n/g, '\n');
@@ -27,7 +29,7 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
     try {
       metadata[key] = JSON.parse(raw);
     } catch {
-      throw new Error(`${filename}: ${key} must be a JSON string or null`);
+      throw new Error(`${filename}: ${key} must be valid JSON`);
     }
   }
   for (const key of REQUIRED) {
@@ -47,7 +49,7 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   if (typeof nameZh !== 'string' || nameZh.length < 1 || nameZh.length > 120) {
     throw new Error(`${filename}: invalid name_zh`);
   }
-  for (const key of OPTIONAL) {
+  for (const key of ['image_url', 'image_credit', 'source_url']) {
     if (metadata[key] !== undefined && typeof metadata[key] !== 'string') {
       throw new Error(`${filename}: ${key} must be a string`);
     }
@@ -59,6 +61,10 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   }
   if (metadata.image_url && !metadata.image_credit) {
     throw new Error(`${filename}: image_credit is required with image_url`);
+  }
+  if (metadata.distribution !== undefined) {
+    const problem = distributionProblem(metadata.distribution);
+    if (problem) throw new Error(`${filename}: distribution ${problem}`);
   }
   const body = match[2].trim();
   if (body.length < 10) throw new Error(`${filename}: description is too short`);
@@ -75,6 +81,20 @@ export function isHttpsUrl(value) {
   } catch {
     return false;
   }
+}
+
+// Returns why a distribution list is invalid, or null. A region may not appear with one of its ancestors.
+export function distributionProblem(value) {
+  if (!Array.isArray(value) || value.length > 100) return 'must be an array of at most 100 region ids';
+  const ids = new Set(value);
+  if (ids.size !== value.length) return 'has repeated regions';
+  for (const id of value) {
+    if (typeof id !== 'string' || !Object.hasOwn(REGION_PARENTS, id)) return `has unknown region: ${id}`;
+    for (let parent = REGION_PARENTS[id]; parent !== null; parent = REGION_PARENTS[parent]) {
+      if (ids.has(parent)) return `lists ${id} inside ${parent}`;
+    }
+  }
+  return null;
 }
 
 export function markdownImageUrls(source) {
@@ -205,7 +225,8 @@ export function createTaxonMarkdown(input) {
     name_zh: input.name_zh,
     image_url: input.image_url || '',
     image_credit: input.image_credit || '',
-    source_url: input.source_url || ''
+    source_url: input.source_url || '',
+    ...(input.distribution?.length ? { distribution: input.distribution } : {})
   };
   return `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${input.description.trim()}\n`;
 }

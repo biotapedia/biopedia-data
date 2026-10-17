@@ -4,7 +4,7 @@
 
 ## 本地维护
 
-每篇 Markdown 用 JSON 字符串形式的 YAML front matter 定义 `id`、`parent_id`、`rank`、`scientific_name`、`name_zh`，正文可使用 Markdown 写介绍。封面图片用 `image_url` 指向 HTTPS 外链，并填写 `image_credit`；正文中的 Markdown 图片也只能使用 HTTPS 外链。可选 `source_url` 引用资料来源。
+每篇 Markdown 用 JSON 字符串形式的 YAML front matter 定义 `id`、`parent_id`、`rank`、`scientific_name`、`name_zh`，正文可使用 Markdown 写介绍。封面图片用 `image_url` 指向 HTTPS 外链，并填写 `image_credit`；正文中的 Markdown 图片也只能使用 HTTPS 外链。可选 `source_url` 引用资料来源。可选 `distribution` 是分布地区编号数组，例如 `["tdwg-36","fao-61"]`：陆地用 TDWG WGSRPD 一、二级区，海洋用 FAO 主要渔区，任意一级都可以，但不能同时列出某个区域和它的上级。合法编号及上下级关系见 `scripts/regions.json`，它与前端的 `src/regions.js` 和地图边界使用同一套编号，修改时需同步。
 
 ```sh
 npm run index      # 重新生成直接子分类的分页索引

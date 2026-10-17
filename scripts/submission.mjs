@@ -1,4 +1,4 @@
-import { createTaxonMarkdown, isHttpsUrl, loadTaxa, markdownImageUrls, parseTaxon, RANKS } from './catalog.mjs';
+import { createTaxonMarkdown, distributionProblem, isHttpsUrl, loadTaxa, markdownImageUrls, parseTaxon, RANKS } from './catalog.mjs';
 
 const MARKER = /<!-- BIOTA_SUBMISSION_V1\s+([A-Za-z0-9_-]+)\s+-->/;
 
@@ -18,7 +18,7 @@ export function parseIssueBody(body) {
 export function prepareSubmission(value, issueNumber, docsDirectory) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('投稿格式错误');
   if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) throw new Error('Issue 编号无效');
-  const fields = ['parent_id', 'ancestors', 'rank', 'scientific_name', 'name_zh', 'image_url', 'image_credit', 'source_url', 'description'];
+  const fields = ['parent_id', 'ancestors', 'rank', 'scientific_name', 'name_zh', 'image_url', 'image_credit', 'source_url', 'distribution', 'description'];
   if (Object.keys(value).some(key => !fields.includes(key))) throw new Error('投稿包含未知字段');
   const parentId = value.parent_id === '' ? null : value.parent_id;
   if (parentId !== null && (typeof parentId !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(parentId))) {
@@ -52,6 +52,9 @@ export function prepareSubmission(value, issueNumber, docsDirectory) {
     if (input.image_url && !isHttpsUrl(input.image_url)) throw new Error('图片链接必须是 HTTPS');
     if (input.source_url && !isHttpsUrl(input.source_url)) throw new Error('资料来源必须是 HTTPS');
     if (input.image_url && !input.image_credit?.trim()) throw new Error('使用图片时请填写作者及授权');
+    if (input.distribution !== undefined && distributionProblem(input.distribution)) {
+      throw new Error('分布地区无效，请在图鉴网页重新选择');
+    }
     const scientificName = input.scientific_name.trim();
     if ([...taxa.values(), ...entries].some(taxon =>
       taxon.parent_id === nextParentId && taxon.scientific_name.toLowerCase() === scientificName.toLowerCase())) {
