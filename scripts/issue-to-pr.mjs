@@ -57,7 +57,9 @@ if (remoteBranch) {
 run('git', ['config', 'user.name', 'github-actions[bot]']);
 run('git', ['config', 'user.email', '41898282+github-actions[bot]@users.noreply.github.com']);
 run('git', ['switch', '-c', branch]);
-fs.writeFileSync(path.join(docsDirectory, 'taxa', `${prepared.id}.md`), prepared.markdown);
+for (const entry of prepared.entries) {
+  fs.writeFileSync(path.join(docsDirectory, 'taxa', `${entry.id}.md`), entry.markdown);
+}
 syncIndexes(docsDirectory);
 run('git', ['add', 'docs/taxa', 'docs/roots.json', 'docs/children']);
 run('git', ['commit', '-m', `Add taxon from issue #${issue.number}`]);

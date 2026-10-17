@@ -65,6 +65,26 @@ test('issue payload becomes a validated Markdown taxon', () => {
   }, 174, docs), /HTTPS/);
 });
 
+test('one issue creates missing ancestors and the requested species together', () => {
+  const result = prepareSubmission({
+    parent_id: 'fungi',
+    ancestors: [{ rank: 'genus', name_zh: '鹅膏属', scientific_name: 'Amanita',
+      description: '鹅膏属是真菌界中的一个属，包含多种具有明显菌盖与菌柄的种类。' }],
+    rank: 'species', name_zh: '毒鹅膏', scientific_name: 'Amanita phalloides',
+    description: '毒鹅膏是一种有毒真菌，辨识与传播时应参考可靠的分类资料。',
+    image_url: '', image_credit: '', source_url: ''
+  }, 201, docs);
+  assert.deepEqual(result.entries.map(entry => entry.id), ['submission-201-1', 'submission-201']);
+  assert.equal(result.entries[0].parent_id, 'fungi');
+  assert.equal(result.entries[1].parent_id, 'submission-201-1');
+  assert.throws(() => prepareSubmission({
+    parent_id: 'fungi',
+    ancestors: [{ rank: 'genus', name_zh: '鹅膏属', scientific_name: 'Amanita', description: '短' }],
+    rank: 'species', name_zh: '毒鹅膏', scientific_name: 'Amanita phalloides',
+    description: '毒鹅膏是一种有毒真菌，辨识与传播时应参考可靠的分类资料。'
+  }, 202, docs), /20–10000/);
+});
+
 test('index checker detects stale child pages', () => {
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'biota-index-'));
   try {
