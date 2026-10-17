@@ -65,6 +65,19 @@ test('issue payload becomes a validated Markdown taxon', () => {
   }, 174, docs), /HTTPS/);
 });
 
+test('Markdown formatting survives submission and inline images require HTTPS', () => {
+  const payload = {
+    parent_id: 'panthera', rank: 'species', scientific_name: 'Panthera markdownus',
+    name_zh: '测试图文豹', image_url: '', image_credit: '', source_url: '',
+    description: '## 形态\n\n**粗体**与*斜体*。\n\n![菌盖](https://example.org/cap.jpg)\n\n*图片作者及授权：示例作者，CC BY 4.0*'
+  };
+  const result = prepareSubmission(payload, 175, docs);
+  assert.equal(parseTaxon(result.markdown).body, payload.description);
+  assert.throws(() => prepareSubmission({
+    ...payload, description: payload.description.replace('https://example.org/cap.jpg', 'http://example.org/cap.jpg')
+  }, 176, docs), /HTTPS/);
+});
+
 test('one issue creates missing ancestors and the requested species together', () => {
   const result = prepareSubmission({
     parent_id: 'fungi',

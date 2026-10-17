@@ -62,6 +62,9 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   }
   const body = match[2].trim();
   if (body.length < 10) throw new Error(`${filename}: description is too short`);
+  if (markdownImageUrls(body).some(url => !isHttpsUrl(url))) {
+    throw new Error(`${filename}: Markdown image must be an HTTPS URL`);
+  }
   return { ...metadata, body };
 }
 
@@ -72,6 +75,10 @@ export function isHttpsUrl(value) {
   } catch {
     return false;
   }
+}
+
+export function markdownImageUrls(source) {
+  return [...source.matchAll(/!\[[^\]]*\]\(([^)\s]+)\)/g)].map(match => match[1]);
 }
 
 export function loadTaxa(docsDirectory) {

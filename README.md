@@ -4,7 +4,7 @@
 
 ## 本地维护
 
-每篇 Markdown 用 JSON 字符串形式的 YAML front matter 定义 `id`、`parent_id`、`rank`、`scientific_name`、`name_zh`，正文写介绍。图片只能用 `image_url` 指向 HTTPS 外链；有图片时必须填写 `image_credit`。可选 `source_url` 引用资料来源。
+每篇 Markdown 用 JSON 字符串形式的 YAML front matter 定义 `id`、`parent_id`、`rank`、`scientific_name`、`name_zh`，正文可使用 Markdown 写介绍。封面图片用 `image_url` 指向 HTTPS 外链，并填写 `image_credit`；正文中的 Markdown 图片也只能使用 HTTPS 外链。可选 `source_url` 引用资料来源。
 
 ```sh
 npm run index      # 重新生成直接子分类的分页索引

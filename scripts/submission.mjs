@@ -1,4 +1,4 @@
-import { createTaxonMarkdown, isHttpsUrl, loadTaxa, parseTaxon, RANKS } from './catalog.mjs';
+import { createTaxonMarkdown, isHttpsUrl, loadTaxa, markdownImageUrls, parseTaxon, RANKS } from './catalog.mjs';
 
 const MARKER = /<!-- BIOTA_SUBMISSION_V1\s+([A-Za-z0-9_-]+)\s+-->/;
 
@@ -40,6 +40,9 @@ export function prepareSubmission(value, issueNumber, docsDirectory) {
       if (typeof input[key] !== 'string' || !input[key].trim()) throw new Error(`${key} 不能为空`);
     }
     if (input.description.length < 20 || input.description.length > 10000) throw new Error('介绍需为 20–10000 字符');
+    if (markdownImageUrls(input.description).some(url => !isHttpsUrl(url))) {
+      throw new Error('介绍中的图片链接必须是 HTTPS');
+    }
     if (input.scientific_name.length > 160 || input.name_zh.length > 120) throw new Error('名称过长');
     for (const key of ['image_url', 'image_credit', 'source_url']) {
       if (input[key] !== undefined && (typeof input[key] !== 'string' || input[key].length > 1000)) {
