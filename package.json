@@ -5,9 +5,10 @@
   "scripts": {
     "index": "node scripts/reindex.mjs",
     "validate": "node scripts/reindex.mjs --check",
+    "auto": "node scripts/auto-species.mjs",
     "test": "node --test"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.12"
   }
 }
