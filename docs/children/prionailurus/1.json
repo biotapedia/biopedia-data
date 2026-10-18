@@ -1,7 +1,7 @@
 {
   "parent_id": "prionailurus",
   "page": 1,
-  "total": 3,
+  "total": 4,
   "next": null,
   "items": [
     {
@@ -12,6 +12,16 @@
       "name_zh": "豹猫",
       "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Chat_L%C3%A9opard_de_Sib%C3%A9rie.jpg/1280px-Chat_L%C3%A9opard_de_Sib%C3%A9rie.jpg",
       "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "prionailurus-planiceps",
+      "parent_id": "prionailurus",
+      "rank": "species",
+      "scientific_name": "Prionailurus planiceps",
+      "name_zh": "扁头豹猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4e/Flat-headed_cat_1_Jim_Sanderson.JPG/1280px-Flat-headed_cat_1_Jim_Sanderson.JPG",
+      "conservation_status": "EN",
       "child_count": 0
     },
     {
