@@ -35,7 +35,8 @@ const docsDirectory = path.join(repoDirectory, 'docs');
 const envFile = path.join(repoDirectory, '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
-const MAX_CANDIDATE_LOOKUPS = 40;
+const MAX_CANDIDATE_LOOKUPS = 150;
+const MAX_GROUP_LOOKUPS = 10;
 const MAX_BATCH = 20;
 const LENGTHS = { species: { min: 200, max: 1400 }, ancestor: { min: 20, max: 400 } };
 // Characters of each reference article the model reads: most of the species articles, only the lead of an ancestor's.
@@ -75,16 +76,22 @@ async function pickCandidate(taxa, proposed) {
   };
   const groups = [...taxa.values()].filter(taxon => LINEAGE_RANKS.includes(taxon.rank))
     .sort((a, b) => ancestry(b.id).length - ancestry(a.id).length || a.id.localeCompare(b.id));
+  // A group full of fossil or unassessed species uses up only its own share of lookups, so the search moves on to
+  // the next, broader group instead of giving up; a species already checked under a deeper group is not checked again.
+  const checked = new Set();
   let lookups = 0;
   for (const group of groups) {
     const root = ancestry(group.id).at(-1);
     const kingdom = root.rank === 'kingdom' ? root.scientific_name : undefined;
     const { record } = await gbifMatch(group.scientific_name, { rank: group.rank.toUpperCase(), kingdom });
     if (!record) continue;
+    let groupLookups = 0;
     for (const species of await gbifSpeciesUnder(record.key)) {
       const name = species.canonicalName;
-      if (!name || known.has(name.toLowerCase()) || proposed.has(slugify(name))) continue;
+      if (!name || known.has(name.toLowerCase()) || proposed.has(slugify(name)) || checked.has(species.key)) continue;
+      if (++groupLookups > MAX_GROUP_LOOKUPS) break;
       if (++lookups > MAX_CANDIDATE_LOOKUPS) throw new Error('No candidate found; pass --name');
+      checked.add(species.key);
       // Fossil and unassessed species have no IUCN category, which keeps automatic picks to living, notable species.
       const status = await iucnStatus(species.key);
       if (!status || status.code === 'NE') continue;
