@@ -164,6 +164,51 @@ export function renderParagraphs(paragraphs, { headings }) {
   }).join('\n\n');
 }
 
+// ---- Fact check: the reviewing model names exact passages to replace, so every change is small and listed in the PR ----
+
+// Punctuation left dangling where a clause was deleted.
+const tidy = text => text.replace(/[，、；：]\s*([。！？])/g, '$1').replace(/([。！？；，])\s*[，、；]/g, '$1')
+  .replace(/^[\s，、；。]+/, '').replace(/[ \t]{2,}/g, ' ').trim();
+
+// Applies corrections of the form { original, replacement, reason } to one entry's paragraphs. A correction is skipped
+// when its passage is not found exactly once or when `check(newText)` names a problem with the result.
+// Paragraphs left empty are dropped.
+export function applyCorrections(paragraphs, corrections, check = () => null) {
+  let result = paragraphs.map(paragraph => ({ ...paragraph, text: paragraph.text.trim() }));
+  const applied = [];
+  const skipped = [];
+  for (const correction of corrections) {
+    const { original, replacement } = correction;
+    if (typeof original !== 'string' || !original.trim() || typeof replacement !== 'string') {
+      skipped.push({ ...correction, why: '格式不完整' });
+      continue;
+    }
+    const hits = result.flatMap((paragraph, index) => {
+      const found = [];
+      for (let at = paragraph.text.indexOf(original); at !== -1; at = paragraph.text.indexOf(original, at + 1)) found.push({ index, at });
+      return found;
+    });
+    if (hits.length !== 1) {
+      skipped.push({ ...correction, why: hits.length ? '原文片段出现了不止一次' : '原文中找不到这段文字' });
+      continue;
+    }
+    const [{ index, at }] = hits;
+    const before = result[index].text;
+    let head = before.slice(0, at);
+    // Deleting the end of a sentence that began after a comma: the comma's clause now ends the sentence.
+    if (!replacement && /[。！？]$/.test(original)) head = head.replace(/[，、；：]\s*$/, original.at(-1));
+    const text = tidy(head + replacement + before.slice(at + original.length));
+    const problem = text ? check(text) : null;
+    if (problem) {
+      skipped.push({ ...correction, why: problem });
+      continue;
+    }
+    result = result.map((paragraph, position) => (position === index ? { ...paragraph, text } : paragraph));
+    applied.push(correction);
+  }
+  return { paragraphs: result.filter(paragraph => paragraph.text), applied, skipped };
+}
+
 // ---- Distribution: only regions that observation records support, and only when the model is sure ------------------
 
 // Land regions that have GBIF records, from per-country counts. `isoToRegions` maps an ISO country code to region ids.

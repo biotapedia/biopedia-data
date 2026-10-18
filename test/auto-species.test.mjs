@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
 import {
-  collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
+  applyCorrections, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
   paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
 } from '../scripts/auto-rules.mjs';
 import { REGION_PARENTS } from '../scripts/catalog.mjs';
@@ -137,6 +137,19 @@ test('paragraphs need headings (species), text, no links or markup, and a sensib
   assert.match(paragraphProblems([paragraph('形态', '详见 https://example.com 的内容。')], limits).join(''), /links/);
   assert.match(paragraphProblems([paragraph('形态', '虎是<b>大型</b>猫科动物。')], limits).join(''), /HTML/);
   assert.deepEqual(paragraphProblems([], limits), ['没有段落']);
+});
+
+test('fact-check corrections replace exact passages, tidy deletions and skip what they cannot apply', () => {
+  const paragraphs = [paragraph('形态特征', '虎体长可达 3.9 米，是现存最大的猫科动物。毛色橙黄。'), paragraph('繁殖', '寿命约二十年。')];
+  const fix = (original, replacement) => ({ scientific_name: 'Panthera tigris', original, replacement, reason: '无依据' });
+  const result = applyCorrections(paragraphs, [
+    fix('可达 3.9 米', '较大'), fix('是现存最大的猫科动物。', ''), fix('寿命约二十年。', ''), fix('不存在的句子', ''), fix('毛色橙黄', '详见 https://x')
+  ], text => (/https?:/.test(text) ? '有链接' : null));
+  assert.deepEqual(result.paragraphs, [paragraph('形态特征', '虎体长较大。毛色橙黄。')]);
+  assert.equal(result.applied.length, 3);
+  assert.deepEqual(result.skipped.map(item => item.why), ['原文中找不到这段文字', '有链接']);
+  assert.equal(paragraphs[1].text, '寿命约二十年。');
+  assert.match(applyCorrections([paragraph('', '虎。虎。')], [fix('虎。', '')]).skipped[0].why, /不止一次/);
 });
 
 test('paragraphs are rendered with sub-headings only for species', () => {

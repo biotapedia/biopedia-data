@@ -9,6 +9,9 @@
 // one auto/<id> branch and opens a single pull request (used by .github/workflows/auto-species.yml); otherwise files
 // are written to docs/ for review. --replace regenerates species that are already in the catalog (no sub-taxa allowed).
 //
+// The text is written by one model call and then fact-checked against the same Wikipedia references by a second call
+// (LLM_REVIEW_MODEL, defaulting to LLM_MODEL; LLM_REVIEW=off skips it). Every correction is listed in the report.
+//
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -16,14 +19,14 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createTaxonMarkdown, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes } from './catalog.mjs';
-import { chatJson, LLM_SETTINGS, WRITE_PROMPT, writingShapeProblem } from './auto-llm.mjs';
+import { chatJson, LLM_SETTINGS, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT, writingShapeProblem } from './auto-llm.mjs';
 import {
-  composeBody, copiedPassage, COPY_RUN, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems, planLineage, referenceText,
-  parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
+  applyCorrections, clean, composeBody, copiedPassage, COPY_RUN, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
+  planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
 } from './auto-rules.mjs';
 import {
   freeImage, gbifCountryCounts, gbifMatch, gbifRecord, gbifSpeciesUnder, gbifSpeciesUrl, imageCandidates, iucnStatus,
-  regionTables, wikiArticle, wikidataForGbif
+  regionTables, wikiArticles, wikidataForGbif
 } from './auto-sources.mjs';
 
 const repoDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -34,13 +37,22 @@ if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
 const MAX_CANDIDATE_LOOKUPS = 40;
 const MAX_BATCH = 20;
-const LENGTHS = { species: { min: 200, max: 3000 }, ancestor: { min: 20, max: 500 } };
-// Characters of the reference article the model reads: most of the species article, only the lead of an ancestor's.
-const REFERENCE_CHARS = { species: 10000, ancestor: 1500 };
+const LENGTHS = { species: { min: 400, max: 4000 }, ancestor: { min: 20, max: 600 } };
+// Characters of each reference article the model reads: most of the species articles, only the lead of an ancestor's.
+const REFERENCE_CHARS = { species: { zh: 10000, en: 15000 }, ancestor: { zh: 1500, en: 1500 } };
 const MAX_DISTRIBUTION_CANDIDATES = 30;
 const STATUS_ZH = { EX: '灭绝', EW: '野外灭绝', CR: '极危', EN: '濒危', VU: '易危', NT: '近危', LC: '无危', DD: '数据缺乏', NE: '未评估' };
 const RANK_ZH = { kingdom: '界', phylum: '门', class: '纲', order: '目', family: '科', genus: '属', species: '种' };
 const countryNames = new Intl.DisplayNames(['zh-Hans'], { type: 'region' });
+
+const kindOf = entry => (entry.rank === 'species' ? 'species' : 'ancestor');
+const articleName = article => `${article.lang === 'zh' ? '中文' : '英文'}维基百科「${article.title}」`;
+// What the model reads of an entry's Wikipedia articles, one item per language.
+const references = entry => entry.articles.map(article => ({
+  source: articleName(article), text: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang])
+}));
+// The first run of text copied verbatim from any of the entry's articles, or null.
+const copiedFrom = (entry, text) => entry.articles.map(article => copiedPassage(text, article.text)).find(Boolean) ?? null;
 
 function run(program, args) {
   return execFileSync(program, args, {
@@ -104,7 +116,7 @@ async function gather(taxa, record) {
     });
   for (const entry of entries) {
     entry.wikidata = await wikidataForGbif(entry.gbif_key);
-    entry.article = await wikiArticle(entry.wikidata?.articles, { intro: entry.rank !== 'species' });
+    entry.articles = await wikiArticles(entry.wikidata?.articles, { intro: entry.rank !== 'species' });
   }
   const species = entries.at(-1);
   species.authorship = (record.authorship || '').trim();
@@ -120,20 +132,26 @@ async function gather(taxa, record) {
   return { parentId: plan.parentId, entries, classification };
 }
 
-// What the model is given: names, classification, status and, when there is one, a Wikipedia excerpt to read.
-function writingInput({ entries, classification }) {
+// The authoritative data about the species: name, classification and status.
+function speciesFacts({ entries, classification }) {
   const species = entries.at(-1);
-  const reference = entry => (entry.article ? referenceText(entry.article.text, REFERENCE_CHARS[entry.rank === 'species' ? 'species' : 'ancestor']) : null);
+  return {
+    scientific_name: species.scientific_name, rank: species.rank, name_zh: species.wikidata?.name_zh ?? null,
+    authorship: species.authorship || null,
+    classification: classification.map(item => ({ rank: item.rank, scientific_name: item.scientific_name, name_zh: item.name_zh })),
+    conservation_status: species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}）` : null
+  };
+}
+
+// What the model is given: the facts and, for every entry, the Wikipedia excerpts to read.
+function writingInput(gathered) {
+  const { entries } = gathered;
+  const species = entries.at(-1);
   const describe = entry => ({
-    scientific_name: entry.scientific_name, rank: entry.rank, name_zh: entry.wikidata?.name_zh ?? null, reference: reference(entry)
+    scientific_name: entry.scientific_name, rank: entry.rank, name_zh: entry.wikidata?.name_zh ?? null, references: references(entry)
   });
   return {
-    species: {
-      ...describe(species),
-      authorship: species.authorship || null,
-      classification: classification.map(item => ({ rank: item.rank, scientific_name: item.scientific_name, name_zh: item.name_zh })),
-      conservation_status: species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}）` : null
-    },
+    species: { ...speciesFacts(gathered), references: references(species) },
     ancestors: entries.slice(0, -1).map(describe),
     distribution_candidates: (species.regionCandidates ?? []).slice(0, MAX_DISTRIBUTION_CANDIDATES).map(region => ({
       id: region.id, name: region.name, records: region.records,
@@ -155,10 +173,10 @@ function proseProblems(output, entries) {
     ? entries.map((entry, index) => [entry, index < ancestors.length ? output.ancestors[index] : output.species])
     : [[entries.at(-1), output.species]];
   for (const [entry, item] of pairs) {
-    const kind = entry.rank === 'species' ? 'species' : 'ancestor';
+    const kind = kindOf(entry);
     problems.push(...paragraphProblems(item.paragraphs, { kind, ...LENGTHS[kind] }).map(problem => `${entry.scientific_name}：${problem}`));
     const text = (item.paragraphs ?? []).map(paragraph => paragraph?.text ?? '').join('');
-    const copied = entry.article ? copiedPassage(text, entry.article.text) : null;
+    const copied = copiedFrom(entry, text);
     if (copied) problems.push(`${entry.scientific_name} 的介绍与维基百科文章有连续 ${COPY_RUN} 字以上相同：「${copied}」，请换用完全不同的表述`);
     if (!entry.wikidata?.name_zh && !item.name_zh?.trim()) problems.push(`没有 ${entry.scientific_name} 的中文名`);
   }
@@ -178,9 +196,59 @@ async function writeProse(gathered) {
   }
 }
 
+// The draft's prose for each entry, in the order of `entries`.
+const proseFor = (entries, output) => entries.map((entry, index) => (index === entries.length - 1 ? output.species : output.ancestors[index]));
+
+// Applies the fact check's corrections to a copy of the draft. A correction that would bring in markup or copied text is
+// skipped and reported, as is one whose passage cannot be found exactly once.
+function applyReview(entries, draft, { output, model }) {
+  const reviewed = structuredClone(draft);
+  const applied = [];
+  const skipped = [];
+  const named = name => entry => name.trim().toLowerCase() === entry.scientific_name.toLowerCase();
+  proseFor(entries, reviewed).forEach((prose, index) => {
+    const entry = entries[index];
+    const check = text => plainTextProblem(text) ?? (copiedFrom(entry, text) ? '改后与参考文章有大段相同文字' : null);
+    const result = applyCorrections(prose.paragraphs, output.corrections.filter(item => named(item.scientific_name)(entry)), check);
+    const problems = paragraphProblems(result.paragraphs, { kind: kindOf(entry), min: 1, max: LENGTHS[kindOf(entry)].max });
+    if (problems.length) throw new Error(`The fact check left ${entry.scientific_name} unusable: ${problems.join('; ')}`);
+    prose.paragraphs = result.paragraphs;
+    applied.push(...result.applied);
+    skipped.push(...result.skipped);
+  });
+  skipped.push(...output.corrections.filter(item => !entries.some(named(item.scientific_name))).map(item => ({ ...item, why: '没有这个学名的条目' })));
+  return { output: reviewed, review: { model, applied, skipped, doubts: output.doubts ?? [] } };
+}
+
+// A second model call checks the draft against the facts and the same references, and names exact passages to fix,
+// including the claims the writer itself was unsure of.
+async function reviewProse(gathered, draft) {
+  const { entries } = gathered;
+  const input = {
+    facts: speciesFacts(gathered),
+    references: entries.map(entry => ({ scientific_name: entry.scientific_name, references: references(entry) })),
+    drafts: proseFor(entries, draft).map((prose, index) => ({
+      scientific_name: entries[index].scientific_name, rank: entries[index].rank, paragraphs: prose.paragraphs
+    })),
+    writer_doubts: draft.claims_to_verify ?? []
+  };
+  const request = `请核对以下条目。\n\n${JSON.stringify(input, null, 2)}`;
+  let feedback = '';
+  for (let attempt = 1; ; attempt++) {
+    const result = await chatJson(REVIEW_PROMPT, request + feedback, {
+      label: 'fact-check the descriptions', model: process.env.LLM_REVIEW_MODEL || undefined
+    });
+    const problem = reviewShapeProblem(result.output);
+    if (!problem) return applyReview(entries, draft, result);
+    if (attempt === 2) throw new Error(`The fact check did not return usable output: ${problem}`);
+    feedback = `\n\n上一次的输出不符合格式要求：${problem}。请按要求重新输出。`;
+    console.warn(`Fact check output was malformed, retrying: ${problem}`);
+  }
+}
+
 function wikiSource(article) {
   return {
-    label: '参考资料', title: `${article.lang === 'zh' ? '中文' : '英文'}维基百科「${article.title}」`, url: article.url,
+    label: '参考资料', title: articleName(article), url: article.url,
     note: 'CC BY-SA 4.0；仅作参考，文字为重新撰写'
   };
 }
@@ -194,7 +262,7 @@ function buildEntries({ parentId, entries }, output, distribution) {
     const nameSource = entry.wikidata?.name_zh ? `Wikidata（${entry.wikidata.name_language}）` : 'AI 拟定，需核对';
     const sources = [{ label: '学名与分类', title: 'GBIF Backbone Taxonomy', url: gbifSpeciesUrl(entry.gbif_key), note: 'CC BY 4.0' }];
     if (entry.wikidata?.name_zh) sources.push({ label: '中文名', title: `Wikidata ${entry.wikidata.qid}`, url: entry.wikidata.url, note: 'CC0' });
-    if (entry.article) sources.push(wikiSource(entry.article));
+    for (const article of entry.articles) sources.push(wikiSource(article));
     if (isSpecies && entry.status) {
       sources.push({
         label: '保护等级', title: 'IUCN 红色名录',
@@ -222,7 +290,17 @@ function buildEntries({ parentId, entries }, output, distribution) {
   });
 }
 
-function speciesReport(built, output, distribution) {
+// A corrected or quoted passage, safe to show in the pull request.
+const quote = text => `「${clean(text).slice(0, 160) || '（删去）'}」`;
+
+function reviewReport(review) {
+  if (!review) return [];
+  const applied = review.applied.map(item => `- ${quote(item.original)} → ${quote(item.replacement)}：${clean(item.reason)}`);
+  const skipped = review.skipped.map(item => `- 未应用（${item.why}）：${quote(item.original)} → ${quote(item.replacement)}：${clean(item.reason)}`);
+  return ['### AI 核查记录', '', ...(applied.length || skipped.length ? [...applied, ...skipped] : ['- 核查没有发现需要改正的地方']), ''];
+}
+
+function speciesReport(built, output, distribution, review) {
   const species = built.at(-1);
   const rows = built.map(entry =>
     `| \`${entry.id}\` | ${RANK_ZH[entry.rank]} | *${entry.scientific_name}* | ${entry.name_zh} | ${entry.name_source} |`);
@@ -234,10 +312,14 @@ function speciesReport(built, output, distribution) {
   const map = distribution.regions.length
     ? `已填写 ${distribution.regions.map(id => `\`${id}\` ${regionName(id)}`).join('、')}。模型的依据：${distribution.note || '（未说明）'}`
     : `未填写：${distribution.note}`;
-  const reference = species.article
-    ? `模型阅读了[${species.article.title}](${linkUrl(species.article.url)})（${species.article.lang === 'zh' ? '中文' : '英文'}维基百科）作为参考，并结合自身知识撰写`
+  const reference = species.articles.length
+    ? `模型阅读了${species.articles.map(article => `[${articleName(article)}](${linkUrl(article.url)})`).join('和')}作为参考，并结合自身知识撰写`
     : '没有找到维基百科条目，完全由模型凭自身知识撰写，请格外仔细核对';
-  const claims = output.claims_to_verify ?? [];
+  const checked = review
+    ? `由 \`${review.model}\` 对照参考文章逐句核查，改正 ${review.applied.length} 处${review.skipped.length ? `，${review.skipped.length} 处建议未能自动应用` : ''}，仍可能有遗漏`
+    : '**没有进行 AI 核查**（LLM_REVIEW=off）';
+  // After a fact check the writer's doubts have been dealt with; what is left are the ones the check could not settle.
+  const claims = [...new Set((review ? review.doubts : output.claims_to_verify ?? []).map(claim => claim.trim()).filter(Boolean))];
   return [
     '| 条目 | 级别 | 学名 | 中文名 | 中文名来源 |',
     '|---|---|---|---|---|',
@@ -249,12 +331,14 @@ function speciesReport(built, output, distribution) {
     `- 保护等级：${species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}），来自 IUCN 红色名录（经 GBIF）` : '无评估，未填写'}`,
     `- 封面图片：${image}`,
     ...skipped,
-    `- 介绍：${reference}。**文字中的事实没有逐条核对**；与参考文章没有连续 ${COPY_RUN} 字以上的相同片段，正文中没有模型生成的链接或图片`,
+    `- 介绍：${reference}；与参考文章没有连续 ${COPY_RUN} 字以上的相同片段，正文中没有模型生成的链接或图片`,
+    `- 事实核查：${checked}`,
     `- 分布地图：${map}`,
     '',
+    ...reviewReport(review),
     '### 需人工核实',
     '',
-    ...(claims.length ? claims.map(claim => `- [ ] ${claim}`) : ['- [ ] （模型未列出，请通读全文）']),
+    ...(claims.length ? claims.map(claim => `- [ ] ${claim}`) : [`- [ ] （${review ? 'AI 核查后没有遗留的存疑说法' : '模型未列出'}，请通读全文）`]),
     ...(distribution.regions.length ? ['- [ ] 分布地图覆盖的地区与该物种的原生分布一致'] : []),
     '',
     '### 审核清单',
@@ -273,13 +357,15 @@ function pullRequestText(results, failures) {
   const title = species.length === 1
     ? `自动新增：${species[0].name_zh}（${species[0].scientific_name}）`
     : `自动新增 ${species.length} 个物种：${species.slice(0, 5).map(item => item.name_zh).join('、')}${species.length > 5 ? ' 等' : ''}`;
-  const models = [...new Set(results.map(result => result.model))].map(model => `\`${model}\``).join('、');
+  const listed = models => [...new Set(models.filter(Boolean))].map(model => `\`${model}\``).join('、');
+  const reviewers = listed(results.map(result => result.review?.model));
   const sections = species.length === 1
     ? [results[0].report]
     : results.flatMap(result => [`## ${result.species.name_zh}（*${result.species.scientific_name}*）`, '', result.report, '']);
   const failed = failures.length ? ['', '## 未能生成', '', ...failures.map(item => `- ${item.target}：${item.message.split('\n')[0]}`), ''] : [];
   const body = [
-    `由 \`scripts/auto-species.mjs\` 自动生成，文字模型：${models}。介绍文字为尽力而为的草稿，合并前请逐项核对。`,
+    `由 \`scripts/auto-species.mjs\` 自动生成，文字模型：${listed(results.map(result => result.model))}${reviewers ? `，核查模型：${reviewers}` : ''}。`
+      + '介绍文字为尽力而为的草稿，经过 AI 核查也仍可能有误，合并前请逐项核对。',
     '',
     ...sections,
     ...failed,
@@ -338,8 +424,8 @@ async function generate(record, taxa, { plan, replace }) {
       entries: gathered.entries.map(entry => ({
         id: entry.id, rank: entry.rank, scientific_name: entry.scientific_name, gbif: gbifSpeciesUrl(entry.gbif_key),
         name_zh: entry.wikidata?.name_zh ?? null, wikidata: entry.wikidata?.url ?? null,
-        article: entry.article && { url: entry.article.url, characters: entry.article.text.length,
-          read_by_model: referenceText(entry.article.text, REFERENCE_CHARS[entry.rank === 'species' ? 'species' : 'ancestor']).length },
+        articles: entry.articles.map(article => ({ url: article.url, characters: article.text.length,
+          read_by_model: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang]).length })),
         authorship: entry.authorship ?? null
       })),
       conservation_status: species.status?.code ?? null,
@@ -349,7 +435,8 @@ async function generate(record, taxa, { plan, replace }) {
     } };
   }
 
-  const result = await writeProse(gathered);
+  const written = await writeProse(gathered);
+  const result = process.env.LLM_REVIEW === 'off' ? { ...written, review: null } : { ...written, ...(await reviewProse(gathered, written.output)) };
   const distribution = species.regionProblem
     ? { regions: [], note: species.regionProblem }
     : selectDistribution(result.output.distribution, species.regionCandidates, REGION_PARENTS);
@@ -359,8 +446,8 @@ async function generate(record, taxa, { plan, replace }) {
   syncIndexes(docsDirectory);
   syncIndexes(docsDirectory, { check: true });
   return {
-    species: built.at(-1), files: built.map(entry => `docs/taxa/${entry.id}.md`), model: result.model,
-    report: speciesReport(built.map((entry, index) => ({ ...gathered.entries[index], ...entry })), result.output, distribution)
+    species: built.at(-1), files: built.map(entry => `docs/taxa/${entry.id}.md`), model: result.model, review: result.review,
+    report: speciesReport(built.map((entry, index) => ({ ...gathered.entries[index], ...entry })), result.output, distribution, result.review)
   };
 }
 

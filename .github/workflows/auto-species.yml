@@ -27,8 +27,9 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    # Up to three model calls per species, each limited by LLM_TIMEOUT (300 s by default), and 20 species per run.
-    timeout-minutes: 180
+    # Up to five model calls per species (three to write, two to fact-check), each limited by LLM_TIMEOUT (300 s by
+    # default), and 20 species per run. Six hours is the most GitHub allows.
+    timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,4 +46,7 @@ jobs:
           LLM_MODEL: ${{ vars.LLM_MODEL }}
           LLM_JSON_MODE: ${{ vars.LLM_JSON_MODE }}
           LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
+          LLM_MAX_TOKENS: ${{ vars.LLM_MAX_TOKENS }}
+          LLM_REVIEW: ${{ vars.LLM_REVIEW }}
+          LLM_REVIEW_MODEL: ${{ vars.LLM_REVIEW_MODEL }}
           GH_TOKEN: ${{ github.token }}

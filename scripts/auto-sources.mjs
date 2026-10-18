@@ -112,17 +112,19 @@ const WIKIPEDIA = { zh: 'https://zh.wikipedia.org', en: 'https://en.wikipedia.or
 // The cover is shown up to about 600 px wide, twice that on high-density screens.
 const MIN_IMAGE_WIDTH = 800;
 
-// Plain text of a Wikipedia article (Simplified script for Chinese), or only its lead section. Chinese is preferred.
-export async function wikiArticle(articles, { intro = false } = {}) {
+// Plain text of the Chinese (Simplified script) and English Wikipedia articles, or only their lead sections. Both are
+// read when they exist: the English article is usually the more detailed one, and two sources let the facts be cross-checked.
+export async function wikiArticles(articles, { intro = false } = {}) {
+  const found = [];
   for (const lang of ['zh', 'en']) {
     if (!articles?.[lang]) continue;
     const page = (await getJson(`${WIKIPEDIA[lang]}/w/api.php?${query({
       action: 'query', prop: 'extracts|info', explaintext: '1', exsectionformat: 'wiki', inprop: 'url', titles: articles[lang],
       redirects: '1', ...(intro ? { exintro: '1' } : {}), ...(lang === 'zh' ? { variant: 'zh-cn' } : {}), format: 'json', formatversion: '2'
     })}`))?.query?.pages?.[0];
-    if (page?.extract?.trim()) return { lang, title: page.title, url: page.fullurl, text: page.extract };
+    if (page?.extract?.trim()) found.push({ lang, title: page.title, url: page.fullurl, text: page.extract });
   }
-  return null;
+  return found;
 }
 
 // The picture the Wikipedia editors chose to head the article.
