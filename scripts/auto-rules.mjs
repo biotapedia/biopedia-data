@@ -54,11 +54,20 @@ export function imageLicenseProblem(meta) {
   return null;
 }
 
-export function imageCredit(meta, pageUrl) {
-  const author = htmlToText(meta.Artist) || htmlToText(meta.Credit);
-  const license = htmlToText(meta.LicenseShortName) || meta.License;
-  const licenseUrl = meta.LicenseUrl ? `（${meta.LicenseUrl}）` : '';
-  return `作者：${author}；许可：${license}${licenseUrl}；来源：Wikimedia Commons ${pageUrl}`.slice(0, 1000);
+// Text that is placed inside Markdown link syntax or a caption must not be able to break out of it.
+export const clean = text => String(text ?? '').replace(/[\[\]()<>`]/g, ' ').replace(/\s+/g, ' ').trim();
+
+// Author and license of a Commons file. The caption on the cover stays short; the license link goes in the sources list.
+export function imageAttribution(meta) {
+  const license = clean(htmlToText(meta.LicenseShortName) || meta.License);
+  const licenseUrl = /^https:\/\/creativecommons\.org\//.test(meta.LicenseUrl ?? '') ? meta.LicenseUrl : null;
+  return { author: clean(htmlToText(meta.Artist) || htmlToText(meta.Credit)).slice(0, 80), license, licenseUrl };
+}
+
+export const imageCredit = ({ author, license }) => `作者：${author} · 许可：${license} · 来源：Wikimedia Commons`;
+
+export function imageSourceNote({ author, license, licenseUrl }) {
+  return `作者 ${author}，${licenseUrl ? `[${license}](${licenseUrl})` : license}`;
 }
 
 const normalizeForCopy = text => text.replace(/[\s\p{P}\p{S}]/gu, '');
@@ -88,7 +97,143 @@ export function descriptionProblem(text, { min, max }) {
   return null;
 }
 
+// Parentheses in a URL would end a Markdown link early; their percent-encoded forms address the same page.
+export const linkUrl = url => url.replace(/\(/g, '%28').replace(/\)/g, '%29');
+
 export function composeBody(description, sources) {
-  const lines = sources.map(({ label, title, url, note }) => `- ${label}：[${title}](${url})${note ? `（${note}）` : ''}`);
+  const lines = sources.map(({ label, title, url, note }) => `- ${label}：[${clean(title)}](${linkUrl(url)})${note ? `（${note}）` : ''}`);
   return `${description.trim()}\n\n## 资料来源\n\n${lines.join('\n')}\n\n> 本条目文字由 AI 根据上述公开资料辅助撰写，并经编辑审核。`;
+}
+
+// ---- Reference text ------------------------------------------------------------------------------------------------
+
+const SKIPPED_SECTIONS = /^(参见|参考文献|参考资料|外部链接|延伸阅读|注释|注解|备注|脚注|腳註|相关作品|See also|References|External links|Further reading|Notes|Footnotes|In popular culture)$/i;
+
+// The part of an encyclopedia article worth reading: boilerplate sections dropped, cut at a paragraph.
+export function referenceText(text, limit = 10000) {
+  let skipping = false;
+  const kept = [];
+  for (const line of text.replace(/\r\n/g, '\n').split('\n')) {
+    const top = line.match(/^==(?!=)\s*(.+?)\s*==\s*$/);
+    if (top) skipping = SKIPPED_SECTIONS.test(top[1]);
+    if (!skipping) kept.push(line);
+  }
+  const joined = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  if (joined.length <= limit) return joined;
+  const cut = joined.lastIndexOf('\n', limit);
+  return joined.slice(0, cut > limit / 2 ? cut : limit).trimEnd();
+}
+
+// ---- Prose ---------------------------------------------------------------------------------------------------------
+
+export function plainTextProblem(text) {
+  if (/https?:|www\.|\]\(|!\[|<[a-z/!]/i.test(text)) return 'must not contain links, images or HTML';
+  if (/^\s*(#|>|```)/m.test(text)) return 'must not contain headings, quotes or code blocks';
+  return null;
+}
+
+export function headingProblem(heading) {
+  if (typeof heading !== 'string' || heading.trim().length < 2 || heading.trim().length > 12) return '小标题需要 2–12 个字';
+  if (/[#\[\]()<>`*_\n]|https?:/i.test(heading)) return '小标题不能含标记或链接';
+  return null;
+}
+
+// Everything wrong with one entry's paragraphs: missing text or headings, links or markup, and length.
+export function paragraphProblems(paragraphs, { kind, min, max }) {
+  if (!Array.isArray(paragraphs) || !paragraphs.length) return ['没有段落'];
+  const problems = [];
+  const texts = [];
+  paragraphs.forEach((paragraph, index) => {
+    if (kind === 'species') {
+      const problem = headingProblem(paragraph?.heading);
+      if (problem) problems.push(`第 ${index + 1} 段：${problem}`);
+    }
+    const text = typeof paragraph?.text === 'string' ? paragraph.text.trim() : '';
+    if (text) texts.push(text);
+    else problems.push(`第 ${index + 1} 段没有正文`);
+  });
+  const problem = descriptionProblem(texts.join(''), { min, max });
+  if (problem) problems.push(`正文${problem}`);
+  return problems;
+}
+
+export function renderParagraphs(paragraphs, { headings }) {
+  return paragraphs.map(paragraph => {
+    const body = paragraph.text.trim();
+    return headings && paragraph.heading?.trim() ? `## ${paragraph.heading.trim()}\n\n${body}` : body;
+  }).join('\n\n');
+}
+
+// ---- Distribution: only regions that observation records support, and only when the model is sure ------------------
+
+// Land regions that have GBIF records, from per-country counts. `isoToRegions` maps an ISO country code to region ids.
+export function regionCandidates(counts, isoToRegions, regionNames, countryName) {
+  const found = new Map();
+  for (const [iso, records] of counts) {
+    for (const id of isoToRegions.get(iso) ?? []) {
+      if (!found.has(id)) found.set(id, { id, name: regionNames.get(id) ?? id, records: 0, countries: [] });
+      const region = found.get(id);
+      region.records += records;
+      region.countries.push({ iso, name: countryName(iso), records });
+    }
+  }
+  return [...found.values()].sort((a, b) => b.records - a.records);
+}
+
+// A level-1 region replaces its children when all of them are listed, as the contribution form's map does.
+export function collapseRegions(regions, parents) {
+  const chosen = new Set(regions);
+  for (const parent of new Set([...chosen].map(id => parents[id]).filter(Boolean))) {
+    const children = Object.keys(parents).filter(id => parents[id] === parent);
+    if (children.every(id => chosen.has(id))) {
+      for (const id of children) chosen.delete(id);
+      chosen.add(parent);
+    }
+  }
+  return [...chosen];
+}
+
+// Accepts the model's distribution only when it is certain and every region has a record behind it.
+export function selectDistribution(value, candidates, parents) {
+  if (!candidates.length) return { regions: [], note: 'GBIF 没有可用的陆地观察记录' };
+  if (!value || value.confidence !== 'high') return { regions: [], note: '模型对分布范围把握不足' };
+  const regions = [...new Set(Array.isArray(value.regions) ? value.regions : [])];
+  if (!regions.length) return { regions: [], note: '模型没有给出分布地区' };
+  const supported = new Set(candidates.map(candidate => candidate.id));
+  const unsupported = regions.filter(id => !supported.has(id));
+  if (unsupported.length) return { regions: [], note: `模型给出了没有 GBIF 记录支持的地区（${unsupported.join('、')}），已放弃` };
+  return { regions: collapseRegions(regions, parents), note: typeof value.reason === 'string' ? value.reason.trim() : '' };
+}
+
+// ---- Batches ---------------------------------------------------------------------------------------------------------
+
+// Scientific names from any mix of lists: one per line or separated by commas or semicolons, `#` starts a comment.
+export function parseSpeciesList(...texts) {
+  const seen = new Set();
+  const names = [];
+  for (const text of texts) {
+    const lines = String(text ?? '').split('\n').map(line => line.replace(/#.*$/, '')).join('\n');
+    for (const raw of lines.split(/[\n,;，；]+/)) {
+      const name = raw.replace(/\s+/g, ' ').trim();
+      if (name && !seen.has(name.toLowerCase())) {
+        seen.add(name.toLowerCase());
+        names.push(name);
+      }
+    }
+  }
+  return names;
+}
+
+export const IDS_MARKER = /<!-- auto-species-ids: ([a-z0-9,-]+) -->/;
+
+// Species ids already proposed by earlier automated pull requests: from the branch name, and from the marker that a
+// batch pull request carries for all of its species.
+export function proposedFromPulls(pulls) {
+  const ids = new Set();
+  for (const pull of pulls) {
+    if (!pull.headRefName?.startsWith('auto/')) continue;
+    ids.add(pull.headRefName.slice(5));
+    for (const id of pull.body?.match(IDS_MARKER)?.[1].split(',') ?? []) ids.add(id);
+  }
+  return ids;
 }

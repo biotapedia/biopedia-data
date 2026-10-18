@@ -14,7 +14,7 @@ const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution', 'co
 export const CONSERVATION_STATUSES = new Set(['EX', 'EW', 'CR', 'EN', 'VU', 'NT', 'LC', 'DD', 'NE']);
 export const CONSERVATION_RANKS = new Set(['species', 'subspecies']);
 // Region id → parent id. Mirrors src/regions.js in the frontend; the map geometry uses the same ids.
-const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
+export const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
 
 export function parseTaxon(markdown, filename = 'unknown.md') {
   const normalized = markdown.replace(/\r\n/g, '\n');

@@ -1,13 +1,18 @@
 name: Propose a new species
 
-# Weekly, or on demand with a scientific name. The result is a pull request; nothing reaches main without review.
+# Weekly, or on demand with scientific names and/or a count. A run opens one pull request for all the species it
+# added; nothing reaches main without review.
 on:
   schedule:
     - cron: '0 2 * * 1'
   workflow_dispatch:
     inputs:
       name:
-        description: 学名，例如 Panthera tigris（留空则自动挑选）
+        description: 学名，例如 Panthera tigris；可填多个，用逗号或换行分隔（留空则自动挑选）
+        required: false
+        default: ''
+      count:
+        description: 另外自动挑选几个物种（留空：没填学名时为 1，填了学名时为 0）
         required: false
         default: ''
 
@@ -22,8 +27,8 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    # Up to three model calls, each limited by LLM_TIMEOUT (300 s by default).
-    timeout-minutes: 40
+    # Up to three model calls per species, each limited by LLM_TIMEOUT (300 s by default), and 20 species per run.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -34,6 +39,7 @@ jobs:
         env:
           # Passed through the environment rather than the command line, so the input is never parsed by the shell.
           SPECIES_NAME: ${{ inputs.name }}
+          SPECIES_COUNT: ${{ inputs.count }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
           LLM_MODEL: ${{ vars.LLM_MODEL }}

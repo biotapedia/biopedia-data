@@ -1,0 +1,38 @@
+{
+  "parent_id": "prionailurus",
+  "page": 1,
+  "total": 3,
+  "next": null,
+  "items": [
+    {
+      "id": "prionailurus-bengalensis",
+      "parent_id": "prionailurus",
+      "rank": "species",
+      "scientific_name": "Prionailurus bengalensis",
+      "name_zh": "豹猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Chat_L%C3%A9opard_de_Sib%C3%A9rie.jpg/1280px-Chat_L%C3%A9opard_de_Sib%C3%A9rie.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "prionailurus-rubiginosus",
+      "parent_id": "prionailurus",
+      "rank": "species",
+      "scientific_name": "Prionailurus rubiginosus",
+      "name_zh": "锈斑豹猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/20/Rostkatze_Zoo_Berlin.JPG/1280px-Rostkatze_Zoo_Berlin.JPG",
+      "conservation_status": "NT",
+      "child_count": 0
+    },
+    {
+      "id": "prionailurus-viverrinus",
+      "parent_id": "prionailurus",
+      "rank": "species",
+      "scientific_name": "Prionailurus viverrinus",
+      "name_zh": "渔猫",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/f/f7/Prionailurus_viverrinus_01.jpg",
+      "conservation_status": "VU",
+      "child_count": 0
+    }
+  ]
+}

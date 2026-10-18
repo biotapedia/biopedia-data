@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
-import { composeBody, copiedPassage, descriptionProblem, imageCredit, imageLicenseProblem, planLineage, slugify, uniqueId } from '../scripts/auto-rules.mjs';
+import {
+  collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
+  paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
+} from '../scripts/auto-rules.mjs';
+import { REGION_PARENTS } from '../scripts/catalog.mjs';
 
 const tiger = {
   key: 5219416, canonicalName: 'Panthera tigris',
@@ -47,7 +51,17 @@ test('only freely licensed, attributable Commons images are accepted', () => {
   assert.match(imageLicenseProblem({ ...ok, NonFree: 'true' }), /non-free/);
   assert.match(imageLicenseProblem({ ...ok, Restrictions: 'personality' }), /restrictions/);
   assert.match(imageLicenseProblem({ ...ok, Artist: '', Credit: '' }), /author/);
-  assert.match(imageCredit(ok, 'https://commons.wikimedia.org/wiki/File:X.jpg'), /^作者：A & B；许可：CC BY-SA 4.0；来源/);
+});
+
+test('the cover caption is short and the license link goes to the sources list', () => {
+  const meta = {
+    License: 'cc-by-sa-4.0', LicenseShortName: 'CC BY-SA 4.0', LicenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0',
+    Artist: '<a href="//commons.wikimedia.org/wiki/User:A">A &amp; B [x]</a>'
+  };
+  const attribution = imageAttribution(meta);
+  assert.equal(imageCredit(attribution), '作者：A & B x · 许可：CC BY-SA 4.0 · 来源：Wikimedia Commons');
+  assert.equal(imageSourceNote(attribution), '作者 A & B x，[CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0)');
+  assert.equal(imageSourceNote(imageAttribution({ ...meta, LicenseUrl: 'https://evil.example/license' })), '作者 A & B x，CC BY-SA 4.0');
 });
 
 test('copied text is detected regardless of punctuation and spacing', () => {
@@ -78,4 +92,100 @@ test('a composed entry passes catalog validation', () => {
   }), 'panthera-tigris.md');
   assert.match(taxon.body, /## 资料来源\n\n- 学名与分类：\[GBIF Backbone Taxonomy\]\(https:\/\/www\.gbif\.org\/species\/5219416\)（CC BY 4\.0）/);
   assert.match(taxon.body, /AI .*辅助撰写/);
+});
+
+test('parentheses in a source URL cannot end the Markdown link', () => {
+  const body = composeBody('虎是亚洲特有的大型猫科动物。', [
+    { label: '封面图片', title: 'Wikimedia Commons', url: 'https://commons.wikimedia.org/wiki/File:Tiger_(Panthera).jpg', note: '作者 A' }
+  ]);
+  assert.match(body, /\]\(https:\/\/commons\.wikimedia\.org\/wiki\/File:Tiger_%28Panthera%29\.jpg\)/);
+});
+
+const article = `虎是猫科动物。
+
+== 形态 ==
+成年雄虎体重可达 300 公斤，体长约 2.8 米。
+
+== 生态 ==
+虎主要捕食鹿类和野猪等大型有蹄类动物。
+
+== 参见 ==
+狮
+
+== 参考文献 ==
+某某文献`;
+
+test('reference text drops boilerplate sections and is cut at a paragraph', () => {
+  const text = referenceText(article, 10000);
+  assert.match(text, /体重可达 300 公斤/);
+  assert.doesNotMatch(text, /参见|某某文献/);
+  const cut = referenceText(article, 50);
+  assert.ok(cut.length <= 50 && cut.endsWith('。') && !cut.includes('捕食'));
+});
+
+const limits = { kind: 'species', min: 10, max: 200 };
+const paragraph = (heading, text) => ({ heading, text });
+
+test('paragraphs need headings (species), text, no links or markup, and a sensible length', () => {
+  const good = [paragraph('形态特征', '成年雄虎体型庞大，身上有醒目的黑色条纹。'), paragraph('食性', '虎以大中型有蹄类动物为食。')];
+  assert.deepEqual(paragraphProblems(good, limits), []);
+  assert.deepEqual(paragraphProblems([paragraph('', '虎是猫科动物。')], { kind: 'ancestor', min: 5, max: 50 }), []);
+  assert.match(paragraphProblems([paragraph('', '虎是大型猫科动物，身上有条纹。')], limits).join(''), /小标题/);
+  assert.match(paragraphProblems([paragraph('形态#', '虎是大型猫科动物，身上有条纹。')], limits).join(''), /小标题/);
+  assert.match(paragraphProblems([paragraph('形态', '')], limits).join(''), /没有正文/);
+  assert.match(paragraphProblems(good, { ...limits, min: 500 }).join(''), /characters/);
+  assert.match(paragraphProblems([paragraph('形态', '详见 https://example.com 的内容。')], limits).join(''), /links/);
+  assert.match(paragraphProblems([paragraph('形态', '虎是<b>大型</b>猫科动物。')], limits).join(''), /HTML/);
+  assert.deepEqual(paragraphProblems([], limits), ['没有段落']);
+});
+
+test('paragraphs are rendered with sub-headings only for species', () => {
+  const paragraphs = [paragraph('形态特征', '第一段。'), paragraph('食性', '第二段。')];
+  assert.equal(renderParagraphs(paragraphs, { headings: true }), '## 形态特征\n\n第一段。\n\n## 食性\n\n第二段。');
+  assert.equal(renderParagraphs(paragraphs, { headings: false }), '第一段。\n\n第二段。');
+});
+
+test('regions are candidates only when observation records fall in them', () => {
+  const isoToRegions = new Map([['IN', new Set(['tdwg-40', 'tdwg-41'])], ['RU', new Set(['tdwg-30', 'tdwg-31'])], ['CN', new Set(['tdwg-36'])]]);
+  const names = new Map([['tdwg-40', 'Indian Subcontinent']]);
+  const candidates = regionCandidates(new Map([['IN', 100], ['RU', 20], ['XX', 5]]), isoToRegions, names, iso => iso);
+  assert.deepEqual(candidates.map(region => [region.id, region.records]), [['tdwg-40', 100], ['tdwg-41', 100], ['tdwg-30', 20], ['tdwg-31', 20]]);
+  assert.equal(candidates[0].name, 'Indian Subcontinent');
+  assert.equal(candidates[1].name, 'tdwg-41');
+});
+
+test('a distribution is used only when the model is sure and every region has records', () => {
+  const candidates = [{ id: 'tdwg-40' }, { id: 'tdwg-41' }, { id: 'tdwg-31' }];
+  const sure = regions => ({ confidence: 'high', regions, reason: '依据事实 5' });
+  assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-31']), candidates, REGION_PARENTS), { regions: ['tdwg-40', 'tdwg-31'], note: '依据事实 5' });
+  assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-40']), candidates, REGION_PARENTS).regions, ['tdwg-40']);
+  assert.match(selectDistribution({ confidence: 'low', regions: ['tdwg-40'] }, candidates, REGION_PARENTS).note, /把握不足/);
+  assert.match(selectDistribution(undefined, candidates, REGION_PARENTS).note, /把握不足/);
+  assert.match(selectDistribution(sure([]), candidates, REGION_PARENTS).note, /没有给出/);
+  assert.match(selectDistribution(sure(['tdwg-40', 'tdwg-25']), candidates, REGION_PARENTS).note, /没有 GBIF 记录支持.*tdwg-25/);
+  assert.match(selectDistribution(sure(['tdwg-40']), [], REGION_PARENTS).note, /没有可用/);
+});
+
+test('all children of a level-1 region are replaced by it, as in the contribution form', () => {
+  assert.deepEqual(collapseRegions(['tdwg-40', 'tdwg-41', 'tdwg-42', 'tdwg-43'], REGION_PARENTS), ['tdwg-4']);
+  assert.deepEqual(collapseRegions(['tdwg-40', 'tdwg-41'], REGION_PARENTS), ['tdwg-40', 'tdwg-41']);
+  assert.equal(parseTaxon(createTaxonMarkdown({
+    id: 'a-b', parent_id: null, rank: 'species', scientific_name: 'A b', name_zh: '甲', distribution: ['tdwg-4'], description: '这是一段足够长的介绍内容。'
+  }), 'a-b.md').distribution[0], 'tdwg-4');
+});
+
+test('species lists accept lines, commas, comments and repeats', () => {
+  assert.deepEqual(parseSpeciesList('Panthera tigris, Panthera  leo;Puma concolor\n# a comment, with a comma\nPanthera LEO # again\n\n'),
+    ['Panthera tigris', 'Panthera leo', 'Puma concolor']);
+  assert.deepEqual(parseSpeciesList('A b', undefined, '', 'a B\nC d'), ['A b', 'C d']);
+  assert.deepEqual(parseSpeciesList(), []);
+});
+
+test('species proposed by earlier automated pull requests are recognised, singly or in a batch', () => {
+  const ids = proposedFromPulls([
+    { headRefName: 'auto/panthera-pardus', body: '<!-- auto-species-ids: panthera-pardus,panthera-onca,prionailurus-rubiginosus -->' },
+    { headRefName: 'auto/ailuropoda-melanoleuca', body: null },
+    { headRefName: 'submission/issue-3', body: '<!-- auto-species-ids: not-ours -->' }
+  ]);
+  assert.deepEqual([...ids].sort(), ['ailuropoda-melanoleuca', 'panthera-onca', 'panthera-pardus', 'prionailurus-rubiginosus']);
 });
