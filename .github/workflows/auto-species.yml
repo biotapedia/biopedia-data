@@ -27,8 +27,7 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    # Up to five model calls per species (three to write, two to fact-check), each limited by LLM_TIMEOUT (300 s by
-    # default), and 20 species per run. Six hours is the most GitHub allows.
+    # Up to three writing calls per species, plus two optional review calls when LLM_REVIEW=on.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4

@@ -161,3 +161,20 @@ test('submitted conservation status is validated and written to the taxon', () =
   assert.throws(() => prepareSubmission({ ...payload, conservation_status: 'vu' }, 403, docs), /濒危等级/);
   assert.throws(() => prepareSubmission({ ...payload, rank: 'genus' }, 404, docs), /只有物种或亚种/);
 });
+
+test('toxicity is optional, species-level, and preserved in submissions and indexes', () => {
+  const payload = {
+    parent_id: 'fungi', rank: 'species', scientific_name: 'Amanita testus', name_zh: '测试鹅膏',
+    description: '该物种的毒性描述应注明摄入途径，并附上可核查的资料来源。',
+    source_url: 'https://example.org/species', toxicity: 'high'
+  };
+  const prepared = prepareSubmission(payload, 501, docs);
+  assert.equal(parseTaxon(prepared.markdown).toxicity, 'high');
+  assert.throws(() => prepareSubmission({ ...payload, toxicity: 'unknown' }, 502, docs), /毒性等级无效/);
+  assert.throws(() => prepareSubmission({ ...payload, rank: 'genus' }, 503, docs), /只有物种或亚种/);
+  const taxon = parseTaxon(createTaxonMarkdown({
+    id: 'test-toxic', parent_id: null, rank: 'species', scientific_name: 'Testus toxicus', name_zh: '测试种',
+    toxicity: 'mild', description: '这是一段用于验证毒性字段的示例介绍。'
+  }));
+  assert.equal(expectedIndexes(new Map([[taxon.id, taxon]])).get('roots.json').includes('"toxicity": "mild"'), true);
+});

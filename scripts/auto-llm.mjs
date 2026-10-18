@@ -1,6 +1,8 @@
 // The language model side of scripts/auto-species.mjs: an OpenAI-compatible Chat Completions call and the prompts.
 
 export const LLM_SETTINGS = ['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL'];
+// Retries after HTTP 429 and 5xx, waiting 15, 30, 60, 120 and 120 seconds unless the provider says how long.
+const MAX_RETRIES = 5;
 
 // Sends one chat request and returns the parsed JSON answer (null when it is not valid JSON) and the model that served it.
 export async function chatJson(system, user, { label, model = process.env.LLM_MODEL }) {
@@ -25,10 +27,18 @@ export async function chatJson(system, user, { label, model = process.env.LLM_MO
         body: JSON.stringify(request),
         signal: AbortSignal.timeout(seconds * 1000)
       });
-      if ((response.status === 429 || response.status >= 500) && attempt < 2) {
-        console.warn(`LLM API answered HTTP ${response.status}, retrying…`);
-        await new Promise(resolve => setTimeout(resolve, 5000 * 2 ** attempt));
+      // Free models share a provider-wide quota that can stay exhausted for minutes, so back off for a while.
+      if ((response.status === 429 || response.status >= 500) && attempt < MAX_RETRIES) {
+        const after = Number(response.headers.get('retry-after'));
+        const wait = Math.min(after > 0 ? after : 15 * 2 ** attempt, 120);
+        await response.body?.cancel();
+        console.warn(`LLM API answered HTTP ${response.status}, retrying in ${wait}s (${attempt + 1}/${MAX_RETRIES})…`);
+        await new Promise(resolve => setTimeout(resolve, wait * 1000));
         continue;
+      }
+      if (response.status === 429) {
+        throw new Error(`${model} is rate-limited (HTTP 429) and stayed so after ${MAX_RETRIES} retries. Free models share one `
+          + `quota with everyone using them: try again later or use a paid model. ${(await response.text()).slice(0, 300)}`);
       }
       if (!response.ok) throw new Error(`LLM API: HTTP ${response.status} ${(await response.text()).slice(0, 500)}`);
       data = await response.json();
@@ -60,14 +70,15 @@ export const WRITE_PROMPT = `你是「万物图鉴」的科普编辑。请用简
 写作：
 5. 全部用自己的话原创表述，不要复述、改写或拼接参考文章的句子，英文参考也不要逐句翻译。
 6. 正文里不要出现标题标记、列表、引用、链接、网址、图片或 HTML。资料来源由系统另行添加。
-7. 物种（species）：写 6–10 个段落，每段有 2–8 个字的小标题 heading。按下面的顺序，选资料足以支撑的主题来写：“命名与词源”“分类与演化”“形态特征”“分布与栖息地”“食性”“行为与习性”“繁殖与生长”“与人类的关系”“保护现状”；资料丰富的主题可以拆成两段，也可以另起贴切的小标题。每段 150–350 字，写出具体细节，例如形态写到体型、体色与斑纹、雌雄差异以及与近似种的区别，分布写到大致范围、生境类型和海拔，保护写到主要威胁和保护措施。全文约 1200–2500 字。references 内容少时可以写短一些，不要为凑字数而空泛发挥或前后重复。
-8. 上级分类（ancestors）：每个只写一个段落，heading 为空字符串，80–300 字，概括该类群的共同特征、包含的主要类群和分布。顺序和 scientific_name 与输入保持一致。
+7. 物种（species）：通常写 3–5 个带小标题的段落，全文约 400–800 字。优先介绍可辨认的形态、分布与栖息地、生态习性和保护现状；其他主题只有 references 有足够资料时才写。资料少时可以更短，不要为凑段落和字数补充未经证实的细节或重复内容。
+8. 上级分类（ancestors）：每个只写一个段落，heading 为空字符串，约 60–180 字，概括资料支持的共同特征和主要类群。顺序和 scientific_name 与输入保持一致。
 9. name_zh：输入里已给出时原样返回；为 null 时给出中国大陆通用的规范中文名，没有把握就返回空字符串。
-10. distribution：distribution_candidates 是 GBIF 有野外观察或标本记录的地区（其中也有引入、逃逸的个体和误认记录，records 只是记录条数，不代表数量）。请只选出该物种**原生分布**的地区。凡是对整体范围、或其中任何一个地区没有十足把握，就把 confidence 设为 "low"，regions 设为空数组——宁缺毋滥。有把握时 confidence 为 "high"，regions 只能填候选列表里的 id，reason 用一句话写明依据。历史分布、引入种群、零星记录都不要选。候选列表为空时返回 {"confidence":"low","regions":[],"reason":""}。
-11. claims_to_verify：列出物种介绍里最需要审核人再核实的说法，尤其是具体数字、分布范围，以及不是来自 references 的内容，每条一句话。
+10. distribution：distribution_candidates 是 GBIF 有观察或标本记录的地区（可能包含引入、逃逸和误认记录，records 不是个体数量）。只选 references 明确支持的**原生分布**地区；逐区判断，不确定的地区不要选。有至少一个确定地区时 confidence 为 "high"，regions 只能填候选列表中的 id，reason 简述参考依据；references 没有分布依据或一个地区也不能确定时返回 {"confidence":"low","regions":[],"reason":""}。脚本会在这种情况下另行展示 GBIF 有记录地区，并明确标注其含义。
+11. toxicity：这是给物种卡片显示的概略毒性标签，不是统一的医学等级。只能在该**物种本身**的 references 明确描述毒性时填写；不能把属或近似种的毒性套用过来，也不能因资料没提毒性就填“无毒”。level 只能是 "none"（明确无毒）、"mild"（微毒）、"toxic"（有毒，程度不明）、"high"（明确剧毒或可致命）；evidence 必须逐字复制 species references 中支持该等级的 8–200 字连续片段。没有直接依据时填 null。正文中应说明资料提到的中毒途径，不能把食用毒性写成接触毒性。
+12. claims_to_verify：列出物种介绍里最需要审核人再核实的说法，尤其是具体数字、分布范围、毒性，以及不是来自 references 的内容，每条一句话。
 
 只输出一个 JSON 对象，不要输出其他任何内容：
-{"species":{"name_zh":"…","paragraphs":[{"heading":"…","text":"…"}]},"ancestors":[{"scientific_name":"…","name_zh":"…","paragraphs":[{"heading":"","text":"…"}]}],"distribution":{"confidence":"high","regions":["tdwg-40"],"reason":"…"},"claims_to_verify":["…"]}`;
+{"species":{"name_zh":"…","paragraphs":[{"heading":"…","text":"…"}],"toxicity":{"level":"toxic","evidence":"参考文章中的原文片段"}},"ancestors":[{"scientific_name":"…","name_zh":"…","paragraphs":[{"heading":"","text":"…"}]}],"distribution":{"confidence":"high","regions":["tdwg-40"],"reason":"…"},"claims_to_verify":["…"]}`;
 
 // A second, independent pass over the finished draft. It returns exact passages to replace rather than a rewritten
 // text, so the script can apply, check and list every change, and nothing else in the draft moves.
@@ -103,6 +114,12 @@ export function writingShapeProblem(output) {
   const isEntry = value => value && isText(value.name_zh) && Array.isArray(value.paragraphs);
   if (!output || typeof output !== 'object' || Array.isArray(output)) return '输出必须是一个 JSON 对象';
   if (!isEntry(output.species)) return 'species 必须包含字符串 name_zh 和数组 paragraphs';
+  const toxicity = output.species.toxicity;
+  if (toxicity !== undefined && toxicity !== null &&
+      (!toxicity || typeof toxicity !== 'object' || Array.isArray(toxicity) ||
+        typeof toxicity.level !== 'string' || typeof toxicity.evidence !== 'string')) {
+    return 'species.toxicity 必须为 null 或包含字符串 level 和 evidence 的对象';
+  }
   if (!Array.isArray(output.ancestors) || output.ancestors.some(item => !isEntry(item) || !isText(item.scientific_name))) {
     return 'ancestors 必须是数组，每一项包含 scientific_name、name_zh 和 paragraphs';
   }

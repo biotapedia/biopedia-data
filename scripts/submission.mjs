@@ -1,4 +1,4 @@
-import { CONSERVATION_RANKS, CONSERVATION_STATUSES, createTaxonMarkdown, distributionProblem, isHttpsUrl, loadTaxa, markdownImageUrls, parseTaxon, RANKS } from './catalog.mjs';
+import { CONSERVATION_RANKS, CONSERVATION_STATUSES, TOXICITY_LEVELS, createTaxonMarkdown, distributionProblem, isHttpsUrl, loadTaxa, markdownImageUrls, parseTaxon, RANKS } from './catalog.mjs';
 
 const MARKER = /<!-- BIOTA_SUBMISSION_V1\s+([A-Za-z0-9_-]+)\s+-->/;
 
@@ -18,7 +18,7 @@ export function parseIssueBody(body) {
 export function prepareSubmission(value, issueNumber, docsDirectory) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('投稿格式错误');
   if (!Number.isSafeInteger(issueNumber) || issueNumber < 1) throw new Error('Issue 编号无效');
-  const fields = ['parent_id', 'ancestors', 'rank', 'scientific_name', 'name_zh', 'image_url', 'image_credit', 'source_url', 'distribution', 'conservation_status', 'description'];
+  const fields = ['parent_id', 'ancestors', 'rank', 'scientific_name', 'name_zh', 'image_url', 'image_credit', 'source_url', 'distribution', 'conservation_status', 'toxicity', 'description'];
   if (Object.keys(value).some(key => !fields.includes(key))) throw new Error('投稿包含未知字段');
   const parentId = value.parent_id === '' ? null : value.parent_id;
   if (parentId !== null && (typeof parentId !== 'string' || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(parentId))) {
@@ -58,6 +58,10 @@ export function prepareSubmission(value, issueNumber, docsDirectory) {
     if (input.conservation_status !== undefined && input.conservation_status !== '') {
       if (!CONSERVATION_STATUSES.has(input.conservation_status)) throw new Error('濒危等级无效');
       if (!CONSERVATION_RANKS.has(input.rank)) throw new Error('只有物种或亚种可以填写濒危等级');
+    }
+    if (input.toxicity !== undefined && input.toxicity !== '') {
+      if (!TOXICITY_LEVELS.has(input.toxicity)) throw new Error('毒性等级无效');
+      if (!CONSERVATION_RANKS.has(input.rank)) throw new Error('只有物种或亚种可以填写毒性等级');
     }
     const scientificName = input.scientific_name.trim();
     if ([...taxa.values(), ...entries].some(taxon =>

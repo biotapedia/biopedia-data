@@ -9,8 +9,8 @@
 // one auto/<id> branch and opens a single pull request (used by .github/workflows/auto-species.yml); otherwise files
 // are written to docs/ for review. --replace regenerates species that are already in the catalog (no sub-taxa allowed).
 //
-// The text is written by one model call and then fact-checked against the same Wikipedia references by a second call
-// (LLM_REVIEW_MODEL, defaulting to LLM_MODEL; LLM_REVIEW=off skips it). Every correction is listed in the report.
+// The text is written by one model call. An optional second pass compares it with the same references
+// (LLM_REVIEW=on, LLM_REVIEW_MODEL defaults to LLM_MODEL); this is a drafting aid, not independent verification.
 //
 import fs from 'node:fs';
 import os from 'node:os';
@@ -22,7 +22,7 @@ import { createTaxonMarkdown, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes 
 import { chatJson, LLM_SETTINGS, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT, writingShapeProblem } from './auto-llm.mjs';
 import {
   applyCorrections, clean, composeBody, copiedPassage, COPY_RUN, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
-  planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
+  planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
 } from './auto-rules.mjs';
 import {
   freeImage, gbifCountryCounts, gbifMatch, gbifRecord, gbifSpeciesUnder, gbifSpeciesUrl, imageCandidates, iucnStatus,
@@ -37,11 +37,12 @@ if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 
 const MAX_CANDIDATE_LOOKUPS = 40;
 const MAX_BATCH = 20;
-const LENGTHS = { species: { min: 400, max: 4000 }, ancestor: { min: 20, max: 600 } };
+const LENGTHS = { species: { min: 200, max: 1400 }, ancestor: { min: 20, max: 400 } };
 // Characters of each reference article the model reads: most of the species articles, only the lead of an ancestor's.
 const REFERENCE_CHARS = { species: { zh: 10000, en: 15000 }, ancestor: { zh: 1500, en: 1500 } };
 const MAX_DISTRIBUTION_CANDIDATES = 30;
 const STATUS_ZH = { EX: '灭绝', EW: '野外灭绝', CR: '极危', EN: '濒危', VU: '易危', NT: '近危', LC: '无危', DD: '数据缺乏', NE: '未评估' };
+const TOXICITY_ZH = { none: '无毒', mild: '微毒', toxic: '有毒', high: '剧毒' };
 const RANK_ZH = { kingdom: '界', phylum: '门', class: '纲', order: '目', family: '科', genus: '属', species: '种' };
 const countryNames = new Intl.DisplayNames(['zh-Hans'], { type: 'region' });
 
@@ -253,7 +254,7 @@ function wikiSource(article) {
   };
 }
 
-function buildEntries({ parentId, entries }, output, distribution) {
+function buildEntries({ parentId, entries }, output, distribution, toxicity) {
   let parent = parentId;
   return entries.map((entry, index) => {
     const isSpecies = entry.rank === 'species';
@@ -271,7 +272,11 @@ function buildEntries({ parentId, entries }, output, distribution) {
       });
     }
     if (isSpecies && distribution.regions.length) {
-      sources.push({ label: '分布依据', title: 'GBIF 观察记录', url: gbifSpeciesUrl(entry.gbif_key), note: '区域划分采用 TDWG WGSRPD' });
+      sources.push({
+        label: distribution.basis === 'records' ? '地图记录来源' : '地图候选记录',
+        title: 'GBIF 观察记录', url: gbifSpeciesUrl(entry.gbif_key),
+        note: distribution.basis === 'records' ? '有记录不等于原生分布；区域划分采用 TDWG WGSRPD' : '原生范围参照上列参考资料；区域划分采用 TDWG WGSRPD'
+      });
     }
     if (isSpecies && entry.image) {
       sources.push({ label: '封面图片', title: 'Wikimedia Commons', url: entry.image.page, note: imageSourceNote(entry.image) });
@@ -281,7 +286,8 @@ function buildEntries({ parentId, entries }, output, distribution) {
       image_url: isSpecies ? entry.image?.url : '', image_credit: isSpecies ? entry.image?.credit : '',
       source_url: gbifSpeciesUrl(entry.gbif_key),
       ...(isSpecies && entry.status ? { conservation_status: entry.status.code } : {}),
-      ...(isSpecies ? { distribution: distribution.regions } : {}),
+      ...(isSpecies && toxicity ? { toxicity: toxicity.level } : {}),
+      ...(isSpecies ? { distribution: distribution.regions, distribution_basis: distribution.basis } : {}),
       description: composeBody(renderParagraphs(prose.paragraphs, { headings: isSpecies }), sources)
     });
     parseTaxon(markdown, `${entry.id}.md`);
@@ -300,7 +306,7 @@ function reviewReport(review) {
   return ['### AI 核查记录', '', ...(applied.length || skipped.length ? [...applied, ...skipped] : ['- 核查没有发现需要改正的地方']), ''];
 }
 
-function speciesReport(built, output, distribution, review) {
+function speciesReport(built, output, distribution, toxicity, review) {
   const species = built.at(-1);
   const rows = built.map(entry =>
     `| \`${entry.id}\` | ${RANK_ZH[entry.rank]} | *${entry.scientific_name}* | ${entry.name_zh} | ${entry.name_source} |`);
@@ -310,14 +316,14 @@ function speciesReport(built, output, distribution, review) {
   const skipped = species.rejectedImages.map(item => `  - 已跳过 ${item.filename}：${item.reason}`);
   const regionName = id => species.regionCandidates.find(region => region.id === id)?.name ?? id;
   const map = distribution.regions.length
-    ? `已填写 ${distribution.regions.map(id => `\`${id}\` ${regionName(id)}`).join('、')}。模型的依据：${distribution.note || '（未说明）'}`
+    ? `${distribution.basis === 'records' ? 'GBIF 有记录地区' : '概略原生分布'}：${distribution.regions.map(id => `\`${id}\` ${regionName(id)}`).join('、')}。${distribution.note}`
     : `未填写：${distribution.note}`;
   const reference = species.articles.length
     ? `模型阅读了${species.articles.map(article => `[${articleName(article)}](${linkUrl(article.url)})`).join('和')}作为参考，并结合自身知识撰写`
     : '没有找到维基百科条目，完全由模型凭自身知识撰写，请格外仔细核对';
   const checked = review
-    ? `由 \`${review.model}\` 对照参考文章逐句核查，改正 ${review.applied.length} 处${review.skipped.length ? `，${review.skipped.length} 处建议未能自动应用` : ''}，仍可能有遗漏`
-    : '**没有进行 AI 核查**（LLM_REVIEW=off）';
+    ? `由 \`${review.model}\` 对照相同参考资料检查草稿，改正 ${review.applied.length} 处${review.skipped.length ? `，${review.skipped.length} 处建议未能自动应用` : ''}；仍需人工核实`
+    : '未启用第二轮 AI 检查；请人工核实草稿';
   // After a fact check the writer's doubts have been dealt with; what is left are the ones the check could not settle.
   const claims = [...new Set((review ? review.doubts : output.claims_to_verify ?? []).map(claim => claim.trim()).filter(Boolean))];
   return [
@@ -329,6 +335,7 @@ function speciesReport(built, output, distribution, review) {
     '',
     `- 学名与分类：GBIF Backbone 精确匹配、状态为 ACCEPTED（[GBIF](${gbifSpeciesUrl(species.gbif_key)})）`,
     `- 保护等级：${species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}），来自 IUCN 红色名录（经 GBIF）` : '无评估，未填写'}`,
+    `- 毒性：${toxicity ? `${TOXICITY_ZH[toxicity.level]}；依据${toxicity.source}原文 ${quote(toxicity.evidence)}` : output.species.toxicity ? '模型给出的等级或原文依据未通过检查，未填写' : '参考资料无明确依据，未填写'}`,
     `- 封面图片：${image}`,
     ...skipped,
     `- 介绍：${reference}；与参考文章没有连续 ${COPY_RUN} 字以上的相同片段，正文中没有模型生成的链接或图片`,
@@ -339,13 +346,14 @@ function speciesReport(built, output, distribution, review) {
     '### 需人工核实',
     '',
     ...(claims.length ? claims.map(claim => `- [ ] ${claim}`) : [`- [ ] （${review ? 'AI 核查后没有遗留的存疑说法' : '模型未列出'}，请通读全文）`]),
-    ...(distribution.regions.length ? ['- [ ] 分布地图覆盖的地区与该物种的原生分布一致'] : []),
+    ...(distribution.regions.length ? [`- [ ] 分布地图的“${distribution.basis === 'records' ? 'GBIF 有记录地区' : '概略原生分布'}”标注与所选地区相符`] : []),
     '',
     '### 审核清单',
     '',
     '- [ ] 分类位置正确，新增的上级分类确有必要',
     '- [ ] 中文名规范（尤其是标为「AI 拟定」的）',
     '- [ ] 图片确为该物种，作者与许可信息完整',
+    ...(toxicity ? ['- [ ] 毒性等级适用于这个物种，且正文准确说明中毒途径和条件'] : []),
     '- [ ] 文字准确、通顺，体型、数量等具体数据已对照权威资料'
   ].join('\n');
 }
@@ -365,7 +373,7 @@ function pullRequestText(results, failures) {
   const failed = failures.length ? ['', '## 未能生成', '', ...failures.map(item => `- ${item.target}：${item.message.split('\n')[0]}`), ''] : [];
   const body = [
     `由 \`scripts/auto-species.mjs\` 自动生成，文字模型：${listed(results.map(result => result.model))}${reviewers ? `，核查模型：${reviewers}` : ''}。`
-      + '介绍文字为尽力而为的草稿，经过 AI 核查也仍可能有误，合并前请逐项核对。',
+      + '介绍文字为待审核草稿；即使启用了第二轮 AI 检查，也不能代替人工核实。',
     '',
     ...sections,
     ...failed,
@@ -436,18 +444,19 @@ async function generate(record, taxa, { plan, replace }) {
   }
 
   const written = await writeProse(gathered);
-  const result = process.env.LLM_REVIEW === 'off' ? { ...written, review: null } : { ...written, ...(await reviewProse(gathered, written.output)) };
+  const result = process.env.LLM_REVIEW === 'on' ? { ...written, ...(await reviewProse(gathered, written.output)) } : { ...written, review: null };
   const distribution = species.regionProblem
-    ? { regions: [], note: species.regionProblem }
+    ? { regions: [], basis: null, note: species.regionProblem }
     : selectDistribution(result.output.distribution, species.regionCandidates, REGION_PARENTS);
-  const built = buildEntries(gathered, result.output, distribution);
+  const toxicity = sourceBackedToxicity(result.output.species.toxicity, references(species));
+  const built = buildEntries(gathered, result.output, distribution, toxicity);
   if (replaced && replaced.id !== species.id) fs.rmSync(path.join(docsDirectory, 'taxa', `${replaced.id}.md`), { force: true });
   for (const entry of built) fs.writeFileSync(path.join(docsDirectory, 'taxa', `${entry.id}.md`), entry.markdown);
   syncIndexes(docsDirectory);
   syncIndexes(docsDirectory, { check: true });
   return {
     species: built.at(-1), files: built.map(entry => `docs/taxa/${entry.id}.md`), model: result.model, review: result.review,
-    report: speciesReport(built.map((entry, index) => ({ ...gathered.entries[index], ...entry })), result.output, distribution, result.review)
+    report: speciesReport(built.map((entry, index) => ({ ...gathered.entries[index], ...entry })), result.output, distribution, toxicity, result.review)
   };
 }
 

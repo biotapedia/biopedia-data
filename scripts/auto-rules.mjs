@@ -1,4 +1,5 @@
 // Pure rules for scripts/auto-species.mjs: no network and no SDK, so they can be unit tested.
+import { TOXICITY_LEVELS } from './catalog.mjs';
 
 // GBIF Backbone ranks, from the top, as they appear on a GBIF species record.
 export const LINEAGE_RANKS = ['kingdom', 'phylum', 'class', 'order', 'family', 'genus'];
@@ -70,7 +71,9 @@ export function imageSourceNote({ author, license, licenseUrl }) {
   return `作者 ${author}，${licenseUrl ? `[${license}](${licenseUrl})` : license}`;
 }
 
-const normalizeForCopy = text => text.replace(/[\s\p{P}\p{S}]/gu, '');
+// Latin letters are dropped as well: the prose is Chinese, and a scientific name alone (Ailuropoda melanoleuca) is long
+// enough to look like a copied passage.
+const normalizeForCopy = text => text.replace(/[\s\p{P}\p{S}a-z]/giu, '');
 
 // Returns the first passage of `text` that also appears verbatim in `reference`, or null.
 export function copiedPassage(text, reference, length = COPY_RUN) {
@@ -102,7 +105,7 @@ export const linkUrl = url => url.replace(/\(/g, '%28').replace(/\)/g, '%29');
 
 export function composeBody(description, sources) {
   const lines = sources.map(({ label, title, url, note }) => `- ${label}：[${clean(title)}](${linkUrl(url)})${note ? `（${note}）` : ''}`);
-  return `${description.trim()}\n\n## 资料来源\n\n${lines.join('\n')}\n\n> 本条目文字由 AI 根据上述公开资料辅助撰写，并经编辑审核。`;
+  return `${description.trim()}\n\n## 资料来源\n\n${lines.join('\n')}\n\n> 本条目文字由 AI 根据上述公开资料辅助撰写，待编辑审核。`;
 }
 
 // ---- Reference text ------------------------------------------------------------------------------------------------
@@ -164,6 +167,15 @@ export function renderParagraphs(paragraphs, { headings }) {
   }).join('\n\n');
 }
 
+// A toxicity label is accepted only with a verbatim passage from a reference the model actually read.
+export function sourceBackedToxicity(value, references) {
+  if (!value || !TOXICITY_LEVELS.has(value.level) || typeof value.evidence !== 'string') return null;
+  const evidence = value.evidence.trim();
+  if (evidence.length < 8 || evidence.length > 200) return null;
+  const source = references.find(reference => reference.text.includes(evidence));
+  return source ? { level: value.level, evidence, source: source.source } : null;
+}
+
 // ---- Fact check: the reviewing model names exact passages to replace, so every change is small and listed in the PR ----
 
 // Punctuation left dangling where a clause was deleted.
@@ -209,7 +221,7 @@ export function applyCorrections(paragraphs, corrections, check = () => null) {
   return { paragraphs: result.filter(paragraph => paragraph.text), applied, skipped };
 }
 
-// ---- Distribution: only regions that observation records support, and only when the model is sure ------------------
+// ---- Distribution: source-backed native regions when possible; otherwise clearly labeled observation regions -------
 
 // Land regions that have GBIF records, from per-country counts. `isoToRegions` maps an ISO country code to region ids.
 export function regionCandidates(counts, isoToRegions, regionNames, countryName) {
@@ -238,16 +250,20 @@ export function collapseRegions(regions, parents) {
   return [...chosen];
 }
 
-// Accepts the model's distribution only when it is certain and every region has a record behind it.
+// Keep supported native regions independently. If none are supported, show all observed regions as records, not range.
 export function selectDistribution(value, candidates, parents) {
-  if (!candidates.length) return { regions: [], note: 'GBIF 没有可用的陆地观察记录' };
-  if (!value || value.confidence !== 'high') return { regions: [], note: '模型对分布范围把握不足' };
-  const regions = [...new Set(Array.isArray(value.regions) ? value.regions : [])];
-  if (!regions.length) return { regions: [], note: '模型没有给出分布地区' };
+  if (!candidates.length) return { regions: [], basis: null, note: 'GBIF 没有可用的陆地观察记录' };
+  const regions = [...new Set(Array.isArray(value?.regions) ? value.regions : [])];
   const supported = new Set(candidates.map(candidate => candidate.id));
+  const native = value?.confidence === 'high' ? regions.filter(id => supported.has(id)) : [];
   const unsupported = regions.filter(id => !supported.has(id));
-  if (unsupported.length) return { regions: [], note: `模型给出了没有 GBIF 记录支持的地区（${unsupported.join('、')}），已放弃` };
-  return { regions: collapseRegions(regions, parents), note: typeof value.reason === 'string' ? value.reason.trim() : '' };
+  if (native.length) {
+    const reason = typeof value.reason === 'string' ? value.reason.trim() : '';
+    return { regions: collapseRegions(native, parents), basis: 'native',
+      note: `${reason || '模型认为这些地区属于原生分布'}${unsupported.length ? `；已排除无 GBIF 记录支持的地区：${unsupported.join('、')}` : ''}` };
+  }
+  return { regions: collapseRegions([...supported], parents), basis: 'records',
+    note: `原生范围未能确认，展示 GBIF 有记录地区${unsupported.length ? `；已排除无记录地区：${unsupported.join('、')}` : ''}` };
 }
 
 // ---- Batches ---------------------------------------------------------------------------------------------------------

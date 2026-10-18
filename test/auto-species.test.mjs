@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
 import {
   applyCorrections, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
-  paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, slugify, uniqueId
+  paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
 } from '../scripts/auto-rules.mjs';
 import { REGION_PARENTS } from '../scripts/catalog.mjs';
 
@@ -70,6 +70,7 @@ test('copied text is detected regardless of punctuation and spacing', () => {
   assert.equal(copiedPassage('俗称老虎，是现存体型最大的猫科动物之一', reference), null);
   assert.equal(copiedPassage('虎是一种大型猫科动物，身上长着醒目的黑色条纹，主要生活在亚洲。', reference), null);
   assert.equal(copiedPassage('任何文字', ''), null);
+  assert.equal(copiedPassage('大熊猫学名Ailuropoda melanoleuca', '大熊猫（学名：Ailuropoda melanoleuca）是熊科动物。'), null);
 });
 
 test('generated prose may not carry links, images or structure', () => {
@@ -167,16 +168,20 @@ test('regions are candidates only when observation records fall in them', () => 
   assert.equal(candidates[1].name, 'tdwg-41');
 });
 
-test('a distribution is used only when the model is sure and every region has records', () => {
+test('native regions are kept individually and uncertain maps show labeled observation records', () => {
   const candidates = [{ id: 'tdwg-40' }, { id: 'tdwg-41' }, { id: 'tdwg-31' }];
   const sure = regions => ({ confidence: 'high', regions, reason: '依据事实 5' });
-  assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-31']), candidates, REGION_PARENTS), { regions: ['tdwg-40', 'tdwg-31'], note: '依据事实 5' });
+  assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-31']), candidates, REGION_PARENTS), { regions: ['tdwg-40', 'tdwg-31'], basis: 'native', note: '依据事实 5' });
   assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-40']), candidates, REGION_PARENTS).regions, ['tdwg-40']);
-  assert.match(selectDistribution({ confidence: 'low', regions: ['tdwg-40'] }, candidates, REGION_PARENTS).note, /把握不足/);
-  assert.match(selectDistribution(undefined, candidates, REGION_PARENTS).note, /把握不足/);
-  assert.match(selectDistribution(sure([]), candidates, REGION_PARENTS).note, /没有给出/);
-  assert.match(selectDistribution(sure(['tdwg-40', 'tdwg-25']), candidates, REGION_PARENTS).note, /没有 GBIF 记录支持.*tdwg-25/);
-  assert.match(selectDistribution(sure(['tdwg-40']), [], REGION_PARENTS).note, /没有可用/);
+  assert.deepEqual(selectDistribution(sure(['tdwg-40', 'tdwg-25']), candidates, REGION_PARENTS).regions, ['tdwg-40']);
+  assert.match(selectDistribution(sure(['tdwg-40', 'tdwg-25']), candidates, REGION_PARENTS).note, /已排除.*tdwg-25/);
+  const uncertain = selectDistribution({ confidence: 'low', regions: ['tdwg-40'] }, candidates, REGION_PARENTS);
+  assert.equal(uncertain.basis, 'records');
+  assert.deepEqual(uncertain.regions, ['tdwg-40', 'tdwg-41', 'tdwg-31']);
+  assert.equal(selectDistribution(undefined, candidates, REGION_PARENTS).basis, 'records');
+  assert.equal(selectDistribution(sure([]), candidates, REGION_PARENTS).basis, 'records');
+  assert.equal(selectDistribution(sure(['tdwg-25']), candidates, REGION_PARENTS).basis, 'records');
+  assert.deepEqual(selectDistribution(sure(['tdwg-40']), [], REGION_PARENTS), { regions: [], basis: null, note: 'GBIF 没有可用的陆地观察记录' });
 });
 
 test('all children of a level-1 region are replaced by it, as in the contribution form', () => {
@@ -185,6 +190,21 @@ test('all children of a level-1 region are replaced by it, as in the contributio
   assert.equal(parseTaxon(createTaxonMarkdown({
     id: 'a-b', parent_id: null, rank: 'species', scientific_name: 'A b', name_zh: '甲', distribution: ['tdwg-4'], description: '这是一段足够长的介绍内容。'
   }), 'a-b.md').distribution[0], 'tdwg-4');
+});
+
+test('distribution basis is stored only with a map and accepts known meanings', () => {
+  const input = { id: 'a-b', parent_id: null, rank: 'species', scientific_name: 'A b', name_zh: '甲',
+    distribution: ['tdwg-40'], distribution_basis: 'records', description: '这是一段足够长的介绍内容。' };
+  assert.equal(parseTaxon(createTaxonMarkdown(input)).distribution_basis, 'records');
+  assert.throws(() => parseTaxon(createTaxonMarkdown({ ...input, distribution_basis: 'unknown' })), /distribution_basis/);
+});
+
+test('AI toxicity needs a passage found verbatim in a species reference', () => {
+  const references = [{ source: '百科条目', text: '这种蘑菇含有强烈毒素，误食后可能导致严重中毒。' }];
+  assert.deepEqual(sourceBackedToxicity({ level: 'high', evidence: '误食后可能导致严重中毒' }, references),
+    { level: 'high', evidence: '误食后可能导致严重中毒', source: '百科条目' });
+  assert.equal(sourceBackedToxicity({ level: 'high', evidence: '接触后可能导致严重中毒' }, references), null);
+  assert.equal(sourceBackedToxicity({ level: 'none', evidence: '没有毒性' }, references), null);
 });
 
 test('species lists accept lines, commas, comments and repeats', () => {

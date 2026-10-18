@@ -9,10 +9,12 @@ export const RANKS = new Set([
   'clade', 'unranked'
 ]);
 const REQUIRED = ['id', 'parent_id', 'rank', 'scientific_name', 'name_zh'];
-const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution', 'conservation_status'];
+const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution', 'distribution_basis', 'conservation_status', 'toxicity'];
 // IUCN Red List categories. Only species-level taxa carry an assessment.
 export const CONSERVATION_STATUSES = new Set(['EX', 'EW', 'CR', 'EN', 'VU', 'NT', 'LC', 'DD', 'NE']);
 export const CONSERVATION_RANKS = new Set(['species', 'subspecies']);
+// A descriptive editorial label, not a standardized hazard assessment. Omit when evidence is absent.
+export const TOXICITY_LEVELS = new Set(['none', 'mild', 'toxic', 'high']);
 // Region id → parent id. Mirrors src/regions.js in the frontend; the map geometry uses the same ids.
 export const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
 
@@ -69,11 +71,19 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
     const problem = distributionProblem(metadata.distribution);
     if (problem) throw new Error(`${filename}: distribution ${problem}`);
   }
+  if (metadata.distribution_basis !== undefined &&
+      (!['native', 'records'].includes(metadata.distribution_basis) || !metadata.distribution?.length)) {
+    throw new Error(`${filename}: distribution_basis requires a nonempty distribution and must be native or records`);
+  }
   if (metadata.conservation_status !== undefined) {
     if (!CONSERVATION_STATUSES.has(metadata.conservation_status)) {
       throw new Error(`${filename}: invalid conservation_status`);
     }
     if (!CONSERVATION_RANKS.has(rank)) throw new Error(`${filename}: conservation_status is only for species or subspecies`);
+  }
+  if (metadata.toxicity !== undefined) {
+    if (!TOXICITY_LEVELS.has(metadata.toxicity)) throw new Error(`${filename}: invalid toxicity`);
+    if (!CONSERVATION_RANKS.has(rank)) throw new Error(`${filename}: toxicity is only for species or subspecies`);
   }
   const body = match[2].trim();
   if (body.length < 10) throw new Error(`${filename}: description is too short`);
@@ -165,6 +175,7 @@ export function expectedIndexes(taxa) {
     name_zh: taxon.name_zh,
     image_url: taxon.image_url || null,
     ...(taxon.conservation_status ? { conservation_status: taxon.conservation_status } : {}),
+    ...(taxon.toxicity ? { toxicity: taxon.toxicity } : {}),
     child_count: children.get(taxon.id)?.length || 0
   });
   const sort = (a, b) => a.name_zh.localeCompare(b.name_zh, 'zh-Hans-CN') || a.id.localeCompare(b.id);
@@ -237,7 +248,9 @@ export function createTaxonMarkdown(input) {
     image_credit: input.image_credit || '',
     source_url: input.source_url || '',
     ...(input.distribution?.length ? { distribution: input.distribution } : {}),
-    ...(input.conservation_status ? { conservation_status: input.conservation_status } : {})
+    ...(input.distribution?.length && input.distribution_basis ? { distribution_basis: input.distribution_basis } : {}),
+    ...(input.conservation_status ? { conservation_status: input.conservation_status } : {}),
+    ...(input.toxicity ? { toxicity: input.toxicity } : {})
   };
   return `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${input.description.trim()}\n`;
 }
