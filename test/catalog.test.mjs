@@ -137,3 +137,27 @@ test('submitted distribution is validated and written to the taxon', () => {
   assert.throws(() => prepareSubmission({ ...payload, distribution: ['china'] }, 303, docs), /分布地区/);
   assert.throws(() => prepareSubmission({ ...payload, distribution: 'tdwg-36' }, 304, docs), /分布地区/);
 });
+
+test('conservation status is limited to IUCN codes on species and subspecies', () => {
+  const markdown = (rank, conservation_status) => createTaxonMarkdown({
+    id: 'sample', parent_id: null, rank, scientific_name: 'Samplus', name_zh: '样本',
+    conservation_status, description: '这是一个用于验证濒危等级字段的示例条目。'
+  });
+  assert.equal(parseTaxon(markdown('species', 'EN')).conservation_status, 'EN');
+  assert.equal(parseTaxon(markdown('subspecies', 'CR')).conservation_status, 'CR');
+  assert.doesNotMatch(markdown('species', ''), /conservation_status/);
+  assert.throws(() => parseTaxon(markdown('species', 'XX')), /invalid conservation_status/);
+  assert.throws(() => parseTaxon(markdown('genus', 'EN')), /only for species/);
+});
+
+test('submitted conservation status is validated and written to the taxon', () => {
+  const payload = {
+    parent_id: 'panthera', rank: 'species', scientific_name: 'Panthera statusus', name_zh: '测试等级豹',
+    image_url: '', image_credit: '', source_url: '', conservation_status: 'VU',
+    description: '这是一段用于验证投稿濒危等级转换流程的介绍，长度足以满足条目要求。'
+  };
+  assert.match(prepareSubmission(payload, 401, docs).markdown, /conservation_status: "VU"/);
+  assert.doesNotMatch(prepareSubmission({ ...payload, conservation_status: '' }, 402, docs).markdown, /conservation_status/);
+  assert.throws(() => prepareSubmission({ ...payload, conservation_status: 'vu' }, 403, docs), /濒危等级/);
+  assert.throws(() => prepareSubmission({ ...payload, rank: 'genus' }, 404, docs), /只有物种或亚种/);
+});

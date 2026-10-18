@@ -9,7 +9,10 @@ export const RANKS = new Set([
   'clade', 'unranked'
 ]);
 const REQUIRED = ['id', 'parent_id', 'rank', 'scientific_name', 'name_zh'];
-const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution'];
+const OPTIONAL = ['image_url', 'image_credit', 'source_url', 'distribution', 'conservation_status'];
+// IUCN Red List categories. Only species-level taxa carry an assessment.
+export const CONSERVATION_STATUSES = new Set(['EX', 'EW', 'CR', 'EN', 'VU', 'NT', 'LC', 'DD', 'NE']);
+export const CONSERVATION_RANKS = new Set(['species', 'subspecies']);
 // Region id → parent id. Mirrors src/regions.js in the frontend; the map geometry uses the same ids.
 const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
 
@@ -65,6 +68,12 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   if (metadata.distribution !== undefined) {
     const problem = distributionProblem(metadata.distribution);
     if (problem) throw new Error(`${filename}: distribution ${problem}`);
+  }
+  if (metadata.conservation_status !== undefined) {
+    if (!CONSERVATION_STATUSES.has(metadata.conservation_status)) {
+      throw new Error(`${filename}: invalid conservation_status`);
+    }
+    if (!CONSERVATION_RANKS.has(rank)) throw new Error(`${filename}: conservation_status is only for species or subspecies`);
   }
   const body = match[2].trim();
   if (body.length < 10) throw new Error(`${filename}: description is too short`);
@@ -155,6 +164,7 @@ export function expectedIndexes(taxa) {
     scientific_name: taxon.scientific_name,
     name_zh: taxon.name_zh,
     image_url: taxon.image_url || null,
+    ...(taxon.conservation_status ? { conservation_status: taxon.conservation_status } : {}),
     child_count: children.get(taxon.id)?.length || 0
   });
   const sort = (a, b) => a.name_zh.localeCompare(b.name_zh, 'zh-Hans-CN') || a.id.localeCompare(b.id);
@@ -226,7 +236,8 @@ export function createTaxonMarkdown(input) {
     image_url: input.image_url || '',
     image_credit: input.image_credit || '',
     source_url: input.source_url || '',
-    ...(input.distribution?.length ? { distribution: input.distribution } : {})
+    ...(input.distribution?.length ? { distribution: input.distribution } : {}),
+    ...(input.conservation_status ? { conservation_status: input.conservation_status } : {})
   };
   return `---\n${Object.entries(metadata).map(([key, value]) => `${key}: ${JSON.stringify(value)}`).join('\n')}\n---\n\n${input.description.trim()}\n`;
 }
