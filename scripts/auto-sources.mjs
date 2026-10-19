@@ -82,17 +82,28 @@ export async function gbifCountryCounts(key) {
   return new Map((result?.facets?.[0]?.counts ?? []).map(entry => [entry.name, entry.count]));
 }
 
+async function wikidataEntity(qid) {
+  return (await getJson(`https://www.wikidata.org/w/api.php?${query({
+    action: 'wbgetentities', ids: qid, props: 'labels|claims|sitelinks', languages: ZH_LABELS.join('|'), sitefilter: 'zhwiki|enwiki', format: 'json'
+  })}`))?.entities?.[qid] ?? null;
+}
+
 // The Wikidata item that carries this GBIF taxon id (property P846), with its Chinese name, images and article titles.
 export async function wikidataForGbif(key) {
   const search = await getJson(`https://www.wikidata.org/w/api.php?${query({
     action: 'query', list: 'search', srsearch: `haswbstatement:P846=${key}`, srlimit: '1', format: 'json'
   })}`);
-  const qid = search?.query?.search?.[0]?.title;
+  let qid = search?.query?.search?.[0]?.title;
   if (!qid) return null;
-  const entity = (await getJson(`https://www.wikidata.org/w/api.php?${query({
-    action: 'wbgetentities', ids: qid, props: 'labels|claims|sitelinks', languages: ZH_LABELS.join('|'), sitefilter: 'zhwiki|enwiki', format: 'json'
-  })}`))?.entities?.[qid];
+  let entity = await wikidataEntity(qid);
   if (!entity) return null;
+  // Where GBIF and Wikidata accept different names (GBIF's Felis manul is Wikidata's Otocolobus manul), the GBIF id
+  // sits on a synonym item without articles or pictures; those are on the item it is a synonym of (P12763).
+  const accepted = entity.claims?.P12763?.[0]?.mainsnak?.datavalue?.value?.id;
+  if (accepted && !entity.sitelinks?.zhwiki && !entity.sitelinks?.enwiki) {
+    const acceptedEntity = await wikidataEntity(accepted);
+    if (acceptedEntity) [qid, entity] = [accepted, acceptedEntity];
+  }
   const language = ZH_LABELS.find(code => entity.labels?.[code]?.value);
   // Editors mark the best picture with preferred rank; deprecated ones are not meant to be used.
   const images = (entity.claims?.P18 ?? []).filter(claim => claim.rank !== 'deprecated')
