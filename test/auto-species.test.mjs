@@ -3,10 +3,11 @@ import test from 'node:test';
 import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
 import {
   applyCorrections, chosenCandidates, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
-  paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
+  paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, stableSpeciesSample, slugify, uniqueId
 } from '../scripts/auto-rules.mjs';
 import { REGION_PARENTS } from '../scripts/catalog.mjs';
-import { askShapeProblem, pickShapeProblem } from '../scripts/auto-llm.mjs';
+import { askShapeProblem, pickShapeProblem, reviewShapeProblem, WRITE_PROMPT } from '../scripts/auto-llm.mjs';
+import { abstractFromIndex, scholarlyAbstracts, speciesReferenceArticles } from '../scripts/auto-sources.mjs';
 
 const tiger = {
   key: 5219416, canonicalName: 'Panthera tigris',
@@ -98,7 +99,7 @@ test('a composed entry passes catalog validation', () => {
     source_url: 'https://www.gbif.org/species/5219416', conservation_status: 'EN', description: body
   }), 'panthera-tigris.md');
   assert.match(taxon.body, /## 资料来源\n\n- 学名与分类：\[GBIF Backbone Taxonomy\]\(https:\/\/www\.gbif\.org\/species\/5219416\)（CC BY 4\.0）/);
-  assert.match(taxon.body, /AI .*辅助撰写/);
+  assert.match(taxon.body, /AI 撰写，并对照上述资料自动核查/);
 });
 
 test('parentheses in a source URL cannot end the Markdown link', () => {
@@ -128,6 +129,60 @@ test('reference text drops boilerplate sections and is cut at a paragraph', () =
   assert.doesNotMatch(text, /参见|某某文献/);
   const cut = referenceText(article, 50);
   assert.ok(cut.length <= 50 && cut.endsWith('。') && !cut.includes('捕食'));
+});
+
+test('scholarly abstracts must identify the exact species and have enough text to check', () => {
+  const abstract = 'Amanita castanea was described from southwestern China with diagnostic morphology and molecular evidence. The paper compares its features with related species and documents the sampled material in detail.';
+  const inverted = {};
+  abstract.split(' ').forEach((word, position) => { (inverted[word] ??= []).push(position); });
+  assert.equal(abstractFromIndex(inverted), abstract);
+  const work = { id: 'https://openalex.org/W1', title: 'Amanita castanea from China', abstract_inverted_index: inverted };
+  assert.equal(scholarlyAbstracts([work], 'Amanita castanea').length, 1);
+  assert.equal(scholarlyAbstracts([work], 'Amanita castaneae').length, 0);
+});
+
+test('a missing Wikipedia page falls back to an exact-species scholarly abstract', async () => {
+  const originalFetch = globalThis.fetch;
+  const calls = [];
+  globalThis.fetch = async url => {
+    calls.push(String(url));
+    if (String(url).includes('wikipedia.org')) return { ok: true, status: 200, json: async () => ({ query: { pages: [{ missing: true }] } }) };
+    if (String(url).includes('openalex.org')) {
+      const words = 'Amanita castanea is a species described in this study using morphological observations and molecular phylogenetic evidence from collections in China. Its diagnostic characteristics are compared with other Amanita species and the description is based on examined specimens.'.split(' ');
+      const index = {};
+      words.forEach((word, position) => { (index[word] ??= []).push(position); });
+      return { ok: true, status: 200, json: async () => ({ results: [{ title: 'Amanita castanea from China', doi: 'https://doi.org/10.1234/example', abstract_inverted_index: index }] }) };
+    }
+    throw new Error(`Unexpected source request ${url}`);
+  };
+  try {
+    const articles = await speciesReferenceArticles(123, 'Amanita castanea', null);
+    assert.equal(articles[0]?.kind, 'scholarly');
+    assert.equal(articles[0]?.url, 'https://doi.org/10.1234/example');
+    assert.ok(!calls.some(url => url.includes('/descriptions')));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test('a species description from GBIF can verify a draft when articles are absent', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async url => {
+    const address = String(url);
+    if (address.includes('wikipedia.org')) return { ok: true, status: 200, json: async () => ({ query: { pages: [{ missing: true }] } }) };
+    if (address.includes('openalex.org')) return { ok: true, status: 200, json: async () => ({ results: [] }) };
+    if (address.includes('/species/123/descriptions')) return { ok: true, status: 200, json: async () => ({
+      results: [{ description: 'This Amanita species is documented from the region in a taxonomic checklist. Its diagnostic characters and collection context are described in the associated species treatment.', source: 'A taxonomic checklist', language: 'eng' }]
+    }) };
+    throw new Error(`Unexpected source request ${url}`);
+  };
+  try {
+    const articles = await speciesReferenceArticles(123, 'Amanita castanea', null);
+    assert.equal(articles[0]?.kind, 'gbif-description');
+    assert.equal(articles[0]?.url, 'https://www.gbif.org/species/123');
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 const limits = { kind: 'species', min: 10, max: 200 };
@@ -213,6 +268,23 @@ test('AI toxicity needs a passage found verbatim in a species reference', () => 
   assert.equal(sourceBackedToxicity({ level: 'none', evidence: '没有毒性' }, references), null);
 });
 
+test('unknown Chinese names are represented as missing rather than invented', () => {
+  const markdown = createTaxonMarkdown({
+    id: 'amanita-unknown', parent_id: null, rank: 'species', scientific_name: 'Amanita unknown',
+    name_zh: '', description: '这是一段待核对的物种简介，中文名仍在查找。'
+  });
+  assert.equal(parseTaxon(markdown).name_zh, '');
+  assert.match(WRITE_PROMPT, /绝不能拟造中文名/);
+});
+
+test('source review defaults missing toxicity and distribution decisions safely', () => {
+  const base = { corrections: [], doubts: [], distribution: { confidence: 'low', regions: [], reason: '' }, toxicity: null };
+  assert.equal(reviewShapeProblem(base), null);
+  assert.equal(reviewShapeProblem({ ...base, distribution: undefined }), null);
+  assert.match(reviewShapeProblem({ ...base, distribution: { confidence: 'high', regions: 'tdwg-30', reason: '' } }), /distribution/);
+  assert.match(reviewShapeProblem({ ...base, toxicity: { level: 'high' } }), /toxicity/);
+});
+
 test('species lists accept lines, commas, comments and repeats', () => {
   assert.deepEqual(parseSpeciesList('Panthera tigris, Panthera  leo;Puma concolor\n# a comment, with a comma\nPanthera LEO # again\n\n'),
     ['Panthera tigris', 'Panthera leo', 'Puma concolor']);
@@ -234,6 +306,15 @@ test('asked-for species are taken only from the GBIF candidates, in the model\'s
   const { chosen, unknown } = chosenCandidates(['Naja atra', 'naja  NAJA', 'Naja atra', 'Naja invented', 'Panthera tigris'], candidates);
   assert.deepEqual(chosen.map(item => item.key), [2, 1]);
   assert.deepEqual(unknown, ['Naja invented', 'Panthera tigris']);
+});
+
+test('unconstrained species sampling is stable regardless of GBIF result order', () => {
+  const candidates = ['Amanita muscaria', 'Amanita phalloides', 'Amanita virosa', 'Amanita rubescens']
+    .map((canonicalName, key) => ({ key, canonicalName }));
+  const sample = stableSpeciesSample(candidates, 2).map(item => item.canonicalName);
+  assert.equal(sample.length, 2);
+  assert.deepEqual(stableSpeciesSample([...candidates].reverse(), 2).map(item => item.canonicalName), sample);
+  assert.deepEqual(stableSpeciesSample(candidates, 10).length, candidates.length);
 });
 
 test('the request and the pick must come back in a usable shape', () => {

@@ -21,6 +21,18 @@ export function uniqueId(base, rank, taken) {
   }
 }
 
+// Reproducible sample from a GBIF candidate list when the user specified a taxon but no selection preference.
+// Hashing names avoids preferring the API's first page order or familiar species memorized by the model.
+export function stableSpeciesSample(species, count) {
+  const hash = name => {
+    let value = 2166136261;
+    for (const char of name.toLowerCase()) value = Math.imul(value ^ char.charCodeAt(0), 16777619);
+    return value >>> 0;
+  };
+  return [...species].sort((a, b) => hash(a.canonicalName) - hash(b.canonicalName)
+    || a.canonicalName.localeCompare(b.canonicalName)).slice(0, count);
+}
+
 // The GBIF record a taxon was taken from, read from its source_url, or null.
 export const gbifKeyOf = taxon => String(taxon.source_url ?? '').match(/^https:\/\/www\.gbif\.org\/species\/(\d+)$/)?.[1] ?? null;
 
@@ -113,7 +125,7 @@ export const linkUrl = url => url.replace(/\(/g, '%28').replace(/\)/g, '%29');
 
 export function composeBody(description, sources) {
   const lines = sources.map(({ label, title, url, note }) => `- ${label}：[${clean(title)}](${linkUrl(url)})${note ? `（${note}）` : ''}`);
-  return `${description.trim()}\n\n## 资料来源\n\n${lines.join('\n')}\n\n> 本条目文字由 AI 根据上述公开资料辅助撰写，待编辑审核。`;
+  return `${description.trim()}\n\n## 资料来源\n\n${lines.join('\n')}\n\n> 本条目文字由 AI 撰写，并对照上述资料自动核查，待编辑审核。`;
 }
 
 // ---- Reference text ------------------------------------------------------------------------------------------------

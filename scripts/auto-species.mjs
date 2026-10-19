@@ -4,7 +4,7 @@
 //                                 [--plan] [--pr] [--replace]
 //
 // --name (repeatable; commas and new lines also separate names) and --file (one name per line, `#` comments) say which
-// species to add. --count N picks N more automatically: assessed, living species from GBIF under the deepest taxa already
+// species to add. --count N picks N more automatically: living species from GBIF under the deepest taxa already
 // in the catalog. Without any of them one species is picked. --ask describes the species in words instead: the model
 // names the taxon to search, GBIF lists the species under it that the catalog lacks, and the model picks from that list
 // only; --count then overrides the number in the request. Species are done one after another; one that fails is
@@ -12,8 +12,7 @@
 // one auto/<id> branch and opens a single pull request (used by .github/workflows/auto-species.yml); otherwise files
 // are written to docs/ for review. --replace regenerates species that are already in the catalog (no sub-taxa allowed).
 //
-// The text is written by one model call. An optional second pass compares it with the same references
-// (LLM_REVIEW=on, LLM_REVIEW_MODEL defaults to LLM_MODEL); this is a drafting aid, not independent verification.
+// Find reference material before calling the writer; only taxonomic facts are passed to the writer.
 //
 import fs from 'node:fs';
 import os from 'node:os';
@@ -28,11 +27,11 @@ import {
 } from './auto-llm.mjs';
 import {
   applyCorrections, chosenCandidates, clean, composeBody, copiedPassage, COPY_RUN, gbifKeyOf, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
-  planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
+  planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, stableSpeciesSample, slugify, uniqueId
 } from './auto-rules.mjs';
 import {
   freeImage, gbifAllSpeciesUnder, gbifCountryCounts, gbifMatch, gbifRecord, gbifSpeciesUnder, gbifSpeciesUrl, imageCandidates, iucnStatus,
-  regionTables, wikiArticles, wikidataForGbif
+  regionTables, speciesReferenceArticles, wikiArticles, wikidataForGbif
 } from './auto-sources.mjs';
 
 const repoDirectory = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -40,14 +39,15 @@ const docsDirectory = path.join(repoDirectory, 'docs');
 // Local settings may live in an uncommitted .env (see .env.example). Variables already set, as in CI, take precedence.
 const envFile = path.join(repoDirectory, '.env');
 if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
+const verifiedChineseNames = JSON.parse(fs.readFileSync(new URL('./verified-chinese-names.json', import.meta.url), 'utf8'));
+const chineseName = entry => entry.nameRecord?.name ?? entry.wikidata?.name_zh ?? '';
 
-const MAX_CANDIDATE_LOOKUPS = 150;
-const MAX_GROUP_LOOKUPS = 10;
 const MAX_BATCH = 20;
 // Species of the asked-for taxon shown to the model; larger taxa are cut, and the model is told the list is partial.
 const MAX_ASK_CANDIDATES = 2000;
-const LENGTHS = { species: { min: 200, max: 1400 }, ancestor: { min: 20, max: 400 } };
-// Characters of each reference article the model reads: most of the species articles, only the lead of an ancestor's.
+const MAX_SOURCE_PROBES = 100;
+const LENGTHS = { species: { min: 120, max: 1400 }, ancestor: { min: 20, max: 400 } };
+// Characters of each reference article the source checker reads: most species articles, only the lead of an ancestor's.
 const REFERENCE_CHARS = { species: { zh: 10000, en: 15000 }, ancestor: { zh: 1500, en: 1500 } };
 const MAX_DISTRIBUTION_CANDIDATES = 30;
 const STATUS_ZH = { EX: '灭绝', EW: '野外灭绝', CR: '极危', EN: '濒危', VU: '易危', NT: '近危', LC: '无危', DD: '数据缺乏', NE: '未评估' };
@@ -56,13 +56,26 @@ const RANK_ZH = { kingdom: '界', phylum: '门', class: '纲', order: '目', fam
 const countryNames = new Intl.DisplayNames(['zh-Hans'], { type: 'region' });
 
 const kindOf = entry => (entry.rank === 'species' ? 'species' : 'ancestor');
-const articleName = article => `${article.lang === 'zh' ? '中文' : '英文'}维基百科「${article.title}」`;
-// What the model reads of an entry's Wikipedia articles, one item per language.
+const articleName = article => article.kind === 'scholarly' ? `学术论文摘要「${article.title}」`
+  : article.kind === 'gbif-description' ? `GBIF 物种描述「${article.title}」`
+    : `${article.lang === 'zh' ? '中文' : '英文'}维基百科「${article.title}」`;
+// What the source checker reads of each entry's reference material.
 const references = entry => entry.articles.map(article => ({
-  source: articleName(article), text: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang])
+  source: articleName(article), text: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang] ?? 15000)
 }));
 // The first run of text copied verbatim from any of the entry's articles, or null.
 const copiedFrom = (entry, text) => entry.articles.map(article => copiedPassage(text, article.text)).find(Boolean) ?? null;
+
+const speciesSourceCache = new Map();
+async function speciesSources(key, scientificName) {
+  if (!speciesSourceCache.has(key)) speciesSourceCache.set(key, (async () => {
+    let wikidata = null;
+    try { wikidata = await wikidataForGbif(key); }
+    catch (error) { console.warn(`Wikidata unavailable for ${scientificName}: ${error.message}`); }
+    return { wikidata, articles: await speciesReferenceArticles(key, scientificName, wikidata) };
+  })());
+  return speciesSourceCache.get(key);
+}
 
 function run(program, args) {
   return execFileSync(program, args, {
@@ -92,25 +105,18 @@ async function pickCandidate(taxa, proposed) {
   };
   const groups = [...taxa.values()].filter(taxon => LINEAGE_RANKS.includes(taxon.rank))
     .sort((a, b) => ancestry(b.id).length - ancestry(a.id).length || a.id.localeCompare(b.id));
-  // A group full of fossil or unassessed species uses up only its own share of lookups, so the search moves on to
-  // the next, broader group instead of giving up; a species already checked under a deeper group is not checked again.
-  const checked = new Set();
-  let lookups = 0;
   for (const group of groups) {
     const root = ancestry(group.id).at(-1);
     const kingdom = root.rank === 'kingdom' ? root.scientific_name : undefined;
     const { record } = await gbifMatch(group.scientific_name, { rank: group.rank.toUpperCase(), kingdom });
     if (!record) continue;
-    let groupLookups = 0;
-    for (const species of await gbifSpeciesUnder(record.key)) {
-      if (!isNew(species) || checked.has(species.key)) continue;
-      if (++groupLookups > MAX_GROUP_LOOKUPS) break;
-      if (++lookups > MAX_CANDIDATE_LOOKUPS) throw new Error('No candidate found; pass --name');
-      checked.add(species.key);
-      // Fossil and unassessed species have no IUCN category, which keeps automatic picks to living, notable species.
-      const status = await iucnStatus(species.key);
-      if (!status || status.code === 'NE') continue;
-      return gbifRecord(species.key);
+    const candidates = (await gbifSpeciesUnder(record.key)).filter(species => !species.extinct && isNew(species));
+    for (const candidate of stableSpeciesSample(candidates, Math.min(candidates.length, MAX_SOURCE_PROBES))) {
+      if (!(await speciesSources(candidate.key, candidate.canonicalName)).articles.length) {
+        console.warn(`Skipped ${candidate.canonicalName}: no supported species reference retrieved before writing`);
+        continue;
+      }
+      return gbifRecord(candidate.key);
     }
   }
   throw new Error('No candidate found; pass --name');
@@ -130,8 +136,8 @@ async function chatChecked(system, user, shapeProblem, label) {
 }
 
 // --ask: the model turns the request into a taxon, GBIF lists the species under it that the catalog lacks, and the
-// model ranks species from that list. The first `count` ranked species with an IUCN assessment are returned, as in
-// automatic picks; names the model makes up are dropped, so every species still comes from GBIF.
+// model ranks species from that list when the request includes criteria. Without criteria, take a stable sample.
+// Names the model makes up are dropped, so every species still comes from GBIF.
 async function askSpecies(request, { count, room, taxa, proposed }) {
   const parsed = await chatChecked(ASK_PROMPT, request, askShapeProblem, 'understand the request');
   const group = parsed.group?.trim();
@@ -155,30 +161,37 @@ async function askSpecies(request, { count, room, taxa, proposed }) {
     + `species, ${candidates.length} not in the catalog yet.`);
   if (!candidates.length) throw new Error(`Every species GBIF lists under ${groupName} is already in the catalog or was proposed`);
 
-  const input = {
-    request, criteria: parsed.criteria ?? '', count: wanted, max_listed: Math.min(candidates.length, wanted * 2 + 5),
-    candidates_complete: complete, candidates: [...new Set(candidates.map(item => item.canonicalName))]
-  };
-  const picked = await chatChecked(PICK_PROMPT, JSON.stringify(input, null, 1), pickShapeProblem, 'choose the species');
-  const { chosen, unknown } = chosenCandidates(picked.species, candidates);
-  if (unknown.length) console.warn(`Ignored names that are not candidates: ${unknown.join(', ')}`);
-
+  let chosen;
+  let reason;
+  if (parsed.criteria?.trim()) {
+    const input = {
+      request, criteria: parsed.criteria, count: wanted, max_listed: Math.min(candidates.length, wanted * 2 + 5),
+      candidates_complete: complete, candidates: [...new Set(candidates.map(item => item.canonicalName))]
+    };
+    const picked = await chatChecked(PICK_PROMPT, JSON.stringify(input, null, 1), pickShapeProblem, 'choose the species');
+    const ranked = chosenCandidates(picked.species, candidates);
+    chosen = ranked.chosen;
+    if (ranked.unknown.length) console.warn(`Ignored names that are not candidates: ${ranked.unknown.join(', ')}`);
+    reason = picked.reason ?? '';
+  } else {
+    chosen = stableSpeciesSample(candidates, Math.min(candidates.length, MAX_SOURCE_PROBES));
+    reason = '未指定其他筛选条件，从 GBIF 候选名单按学名稳定抽样；写作前检查参考资料，不按知名度或 IUCN 评估筛选';
+  }
   const records = [];
-  const unassessed = [];
   for (const candidate of chosen) {
     if (records.length === wanted) break;
-    // Fossil and unassessed species have no IUCN category, as with automatic picks.
-    const status = await iucnStatus(candidate.key);
-    if (!status || status.code === 'NE') { unassessed.push(candidate.canonicalName); continue; }
+    if (!(await speciesSources(candidate.key, candidate.canonicalName)).articles.length) {
+      console.warn(`Skipped ${candidate.canonicalName}: no supported species reference retrieved before writing`);
+      continue;
+    }
     records.push(await gbifRecord(candidate.key));
   }
-  if (unassessed.length) console.warn(`Skipped without an IUCN assessment: ${unassessed.join(', ')}`);
   console.warn(`Picked ${records.length} of ${wanted}: ${records.map(record => record.canonicalName).join(', ') || 'none'}`);
-  if (picked.reason) console.warn(`Model's reasoning: ${picked.reason}`);
-  if (!records.length) throw new Error(`No assessed species under ${groupName} matched the request`);
+  if (reason) console.warn(`Selection: ${reason}`);
+  if (!records.length) throw new Error(`No species under ${groupName} matched the request`);
   return {
     records,
-    summary: { request, group: groupName, rank, criteria: parsed.criteria ?? '', reason: picked.reason ?? '', wanted, found: records.length }
+    summary: { request, group: groupName, rank, criteria: parsed.criteria ?? '', reason, wanted, found: records.length }
   };
 }
 
@@ -194,58 +207,69 @@ async function distributionCandidates(key) {
   }
 }
 
-async function gather(taxa, record) {
-  const plan = planLineage(taxa, record);
+async function gather(taxa, record, { plan = false } = {}) {
+  const lineagePlan = planLineage(taxa, record);
   const taken = new Set(taxa.keys());
-  const entries = [...plan.missing, { rank: 'species', scientific_name: record.canonicalName, gbif_key: record.key }]
+  const entries = [...lineagePlan.missing, { rank: 'species', scientific_name: record.canonicalName, gbif_key: record.key }]
     .map(entry => {
       const id = uniqueId(slugify(entry.scientific_name), entry.rank, taken);
       taken.add(id);
       return { ...entry, id };
     });
-  for (const entry of entries) {
-    entry.wikidata = await wikidataForGbif(entry.gbif_key);
-    entry.articles = await wikiArticles(entry.wikidata?.articles, { intro: entry.rank !== 'species' });
+  for (const entry of [entries.at(-1), ...entries.slice(0, -1)]) {
+    if (entry.rank === 'species') {
+      ({ wikidata: entry.wikidata, articles: entry.articles } = await speciesSources(entry.gbif_key, entry.scientific_name));
+      if (!entry.articles.length) throw new Error(`No supported species reference retrieved for ${entry.scientific_name}; skipped before calling the writing model`);
+    } else {
+      entry.wikidata = await wikidataForGbif(entry.gbif_key);
+      try { entry.articles = await wikiArticles(entry.wikidata?.articles, { intro: true }); }
+      catch (error) {
+        console.warn(`Ancestor references unavailable for ${entry.scientific_name}: ${error.message}`);
+        entry.articles = [];
+      }
+    }
+    entry.nameRecord = verifiedChineseNames[entry.scientific_name] ?? null;
   }
   const species = entries.at(-1);
   species.authorship = (record.authorship || '').trim();
-  species.status = await iucnStatus(record.key);
+  try {
+    species.status = await iucnStatus(record.key);
+  } catch (error) {
+    console.warn(`IUCN status unavailable for ${record.canonicalName}: ${error.message}`);
+    species.status = null;
+  }
   ({ image: species.image, rejected: species.rejectedImages } = await freeImage(await imageCandidates(species.wikidata)));
   ({ candidates: species.regionCandidates, problem: species.regionProblem } = await distributionCandidates(record.key));
   // Chinese names for the whole lineage; existing taxa use the catalog's own names.
   const classification = LINEAGE_RANKS.filter(rank => record[rank]).map(rank => {
     const existing = [...taxa.values()].find(taxon => taxon.rank === rank && taxon.scientific_name.toLowerCase() === record[rank].toLowerCase());
     const created = entries.find(entry => entry.rank === rank);
-    return { rank, scientific_name: record[rank], name_zh: existing?.name_zh ?? created?.wikidata?.name_zh ?? null };
+    return { rank, scientific_name: record[rank], name_zh: existing?.name_zh ?? (created ? chineseName(created) : null) };
   });
-  return { parentId: plan.parentId, entries, classification };
+  return { parentId: lineagePlan.parentId, entries, classification };
 }
 
 // The authoritative data about the species: name, classification and status.
 function speciesFacts({ entries, classification }) {
   const species = entries.at(-1);
   return {
-    scientific_name: species.scientific_name, rank: species.rank, name_zh: species.wikidata?.name_zh ?? null,
+    scientific_name: species.scientific_name, rank: species.rank, name_zh: chineseName(species) || null,
     authorship: species.authorship || null,
     classification: classification.map(item => ({ rank: item.rank, scientific_name: item.scientific_name, name_zh: item.name_zh })),
     conservation_status: species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}）` : null
   };
 }
 
-// What the model is given: the facts and, for every entry, the Wikipedia excerpts to read.
+// The writer sees verified taxonomy but no reference prose, even though sources were located in advance.
 function writingInput(gathered) {
   const { entries } = gathered;
-  const species = entries.at(-1);
   const describe = entry => ({
-    scientific_name: entry.scientific_name, rank: entry.rank, name_zh: entry.wikidata?.name_zh ?? null, references: references(entry)
+    scientific_name: entry.scientific_name, rank: entry.rank, name_zh: chineseName(entry) || null
   });
   return {
-    species: { ...speciesFacts(gathered), references: references(species) },
+    species: speciesFacts(gathered),
     ancestors: entries.slice(0, -1).map(describe),
-    distribution_candidates: (species.regionCandidates ?? []).slice(0, MAX_DISTRIBUTION_CANDIDATES).map(region => ({
-      id: region.id, name: region.name, records: region.records,
-      countries: region.countries.slice(0, 6).map(country => `${country.name} ${country.records}`)
-    }))
+    distribution_candidates: []
   };
 }
 
@@ -266,8 +290,7 @@ function proseProblems(output, entries) {
     problems.push(...paragraphProblems(item.paragraphs, { kind, ...LENGTHS[kind] }).map(problem => `${entry.scientific_name}：${problem}`));
     const text = (item.paragraphs ?? []).map(paragraph => paragraph?.text ?? '').join('');
     const copied = copiedFrom(entry, text);
-    if (copied) problems.push(`${entry.scientific_name} 的介绍与维基百科文章有连续 ${COPY_RUN} 字以上相同：「${copied}」，请换用完全不同的表述`);
-    if (!entry.wikidata?.name_zh && !item.name_zh?.trim()) problems.push(`没有 ${entry.scientific_name} 的中文名`);
+    if (copied) problems.push(`${entry.scientific_name} 的介绍与参考资料有连续 ${COPY_RUN} 字以上相同：「${copied}」，请换用完全不同的表述`);
   }
   return problems;
 }
@@ -277,6 +300,8 @@ async function writeProse(gathered) {
   let feedback = '';
   for (let attempt = 1; ; attempt++) {
     const result = await chatJson(WRITE_PROMPT, request + feedback, { label: 'write the descriptions' });
+    // Extra ancestors are irrelevant when the whole lineage already exists. Some models still include one.
+    if (gathered.entries.length === 1 && result.output && typeof result.output === 'object') result.output.ancestors = [];
     const problems = proseProblems(result.output, gathered.entries);
     if (!problems.length) return result;
     if (attempt === 3) throw new Error(`Generated text failed checks:\n${problems.join('\n')}`);
@@ -292,6 +317,8 @@ const proseFor = (entries, output) => entries.map((entry, index) => (index === e
 // skipped and reported, as is one whose passage cannot be found exactly once.
 function applyReview(entries, draft, { output, model }) {
   const reviewed = structuredClone(draft);
+  reviewed.distribution = output.distribution ?? { confidence: 'low', regions: [], reason: '' };
+  reviewed.species.toxicity = output.toxicity ?? null;
   const applied = [];
   const skipped = [];
   const named = name => entry => name.trim().toLowerCase() === entry.scientific_name.toLowerCase();
@@ -306,6 +333,9 @@ function applyReview(entries, draft, { output, model }) {
     skipped.push(...result.skipped);
   });
   skipped.push(...output.corrections.filter(item => !entries.some(named(item.scientific_name))).map(item => ({ ...item, why: '没有这个学名的条目' })));
+  if (skipped.length) throw new Error(`The source check could not apply ${skipped.length} correction(s): ${skipped.map(item => item.why).join('; ')}`);
+  const finalProblems = proseProblems(reviewed, entries);
+  if (finalProblems.length) throw new Error(`The source check left unusable prose:\n${finalProblems.join('\n')}`);
   return { output: reviewed, review: { model, applied, skipped, doubts: output.doubts ?? [] } };
 }
 
@@ -316,6 +346,10 @@ async function reviewProse(gathered, draft) {
   const input = {
     facts: speciesFacts(gathered),
     references: entries.map(entry => ({ scientific_name: entry.scientific_name, references: references(entry) })),
+    distribution_candidates: (entries.at(-1).regionCandidates ?? []).slice(0, MAX_DISTRIBUTION_CANDIDATES).map(region => ({
+      id: region.id, name: region.name, records: region.records,
+      countries: region.countries.slice(0, 6).map(country => `${country.name} ${country.records}`)
+    })),
     drafts: proseFor(entries, draft).map((prose, index) => ({
       scientific_name: entries[index].scientific_name, rank: entries[index].rank, paragraphs: prose.paragraphs
     })),
@@ -335,10 +369,10 @@ async function reviewProse(gathered, draft) {
   }
 }
 
-function wikiSource(article) {
+function referenceSource(article) {
   return {
     label: '参考资料', title: articleName(article), url: article.url,
-    note: 'CC BY-SA 4.0；仅作参考，文字为重新撰写'
+    note: article.kind === 'wikipedia' ? 'CC BY-SA 4.0；仅作参考，文字为重新撰写' : '仅作事实核查，文字为重新撰写'
   };
 }
 
@@ -347,11 +381,12 @@ function buildEntries({ parentId, entries }, output, distribution, toxicity) {
   return entries.map((entry, index) => {
     const isSpecies = entry.rank === 'species';
     const prose = isSpecies ? output.species : output.ancestors[index];
-    const nameZh = entry.wikidata?.name_zh ?? prose.name_zh.trim();
-    const nameSource = entry.wikidata?.name_zh ? `Wikidata（${entry.wikidata.name_language}）` : 'AI 拟定，需核对';
+    const nameZh = chineseName(entry);
+    const nameSource = entry.nameRecord?.source ?? (entry.wikidata?.name_zh ? `Wikidata（${entry.wikidata.name_language}）` : '未找到可靠中文名，待查');
     const sources = [{ label: '学名与分类', title: 'GBIF Backbone Taxonomy', url: gbifSpeciesUrl(entry.gbif_key), note: 'CC BY 4.0' }];
-    if (entry.wikidata?.name_zh) sources.push({ label: '中文名', title: `Wikidata ${entry.wikidata.qid}`, url: entry.wikidata.url, note: 'CC0' });
-    for (const article of entry.articles) sources.push(wikiSource(article));
+    if (entry.nameRecord) sources.push({ label: '中文名', title: entry.nameRecord.source, url: entry.nameRecord.url });
+    else if (entry.wikidata?.name_zh) sources.push({ label: '中文名', title: `Wikidata ${entry.wikidata.qid}`, url: entry.wikidata.url, note: 'CC0' });
+    for (const article of entry.articles) sources.push(referenceSource(article));
     if (isSpecies && entry.status) {
       sources.push({
         label: '保护等级', title: 'IUCN 红色名录',
@@ -397,7 +432,7 @@ function reviewReport(review) {
 function speciesReport(built, output, distribution, toxicity, review) {
   const species = built.at(-1);
   const rows = built.map(entry =>
-    `| \`${entry.id}\` | ${RANK_ZH[entry.rank]} | *${entry.scientific_name}* | ${entry.name_zh} | ${entry.name_source} |`);
+    `| \`${entry.id}\` | ${RANK_ZH[entry.rank]} | *${entry.scientific_name}* | ${entry.name_zh || '—'} | ${entry.name_source} |`);
   const image = species.image
     ? `${species.image.license}，[原图页面](${linkUrl(species.image.page)})`
     : '无（未找到许可合格的图片）';
@@ -407,13 +442,11 @@ function speciesReport(built, output, distribution, toxicity, review) {
     ? `${distribution.basis === 'records' ? 'GBIF 有记录地区' : '概略原生分布'}：${distribution.regions.map(id => `\`${id}\` ${regionName(id)}`).join('、')}。${distribution.note}`
     : `未填写：${distribution.note}`;
   const reference = species.articles.length
-    ? `模型阅读了${species.articles.map(article => `[${articleName(article)}](${linkUrl(article.url)})`).join('和')}作为参考，并结合自身知识撰写`
-    : '没有找到维基百科条目，完全由模型凭自身知识撰写，请格外仔细核对';
-  const checked = review
-    ? `由 \`${review.model}\` 对照相同参考资料检查草稿，改正 ${review.applied.length} 处${review.skipped.length ? `，${review.skipped.length} 处建议未能自动应用` : ''}；仍需人工核实`
-    : '未启用第二轮 AI 检查；请人工核实草稿';
+    ? `初稿未读取参考文章；核查时对照了${species.articles.map(article => `[${articleName(article)}](${linkUrl(article.url)})`).join('和')}`
+    : '未找到参考资料；请格外仔细核对';
+  const checked = `由 \`${review.model}\` 对照检索到的参考资料检查草稿，改正 ${review.applied.length} 处；仍需人工核实`;
   // After a fact check the writer's doubts have been dealt with; what is left are the ones the check could not settle.
-  const claims = [...new Set((review ? review.doubts : output.claims_to_verify ?? []).map(claim => claim.trim()).filter(Boolean))];
+  const claims = [...new Set((review.doubts ?? []).map(claim => claim.trim()).filter(Boolean))];
   return [
     '| 条目 | 级别 | 学名 | 中文名 | 中文名来源 |',
     '|---|---|---|---|---|',
@@ -422,7 +455,7 @@ function speciesReport(built, output, distribution, toxicity, review) {
     '### 已自动检查',
     '',
     `- 学名与分类：GBIF Backbone 精确匹配、状态为 ACCEPTED（[GBIF](${gbifSpeciesUrl(species.gbif_key)})）`,
-    `- 保护等级：${species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}），来自 IUCN 红色名录（经 GBIF）` : '无评估，未填写'}`,
+    `- 保护等级：${species.status ? `${species.status.code}（${STATUS_ZH[species.status.code]}），来自 IUCN 红色名录（经 GBIF）` : 'GBIF 未返回 IUCN 等级，未填写'}`,
     `- 毒性：${toxicity ? `${TOXICITY_ZH[toxicity.level]}；依据${toxicity.source}原文 ${quote(toxicity.evidence)}` : output.species.toxicity ? '模型给出的等级或原文依据未通过检查，未填写' : '参考资料无明确依据，未填写'}`,
     `- 封面图片：${image}`,
     ...skipped,
@@ -433,13 +466,13 @@ function speciesReport(built, output, distribution, toxicity, review) {
     ...reviewReport(review),
     '### 需人工核实',
     '',
-    ...(claims.length ? claims.map(claim => `- [ ] ${claim}`) : [`- [ ] （${review ? 'AI 核查后没有遗留的存疑说法' : '模型未列出'}，请通读全文）`]),
+    ...(claims.length ? claims.map(claim => `- [ ] ${claim}`) : ['- [ ] AI 核查未列出遗留疑点；请通读全文']),
     ...(distribution.regions.length ? [`- [ ] 分布地图的“${distribution.basis === 'records' ? 'GBIF 有记录地区' : '概略原生分布'}”标注与所选地区相符`] : []),
     '',
     '### 审核清单',
     '',
     '- [ ] 分类位置正确，新增的上级分类确有必要',
-    '- [ ] 中文名规范（尤其是标为「AI 拟定」的）',
+    '- [ ] 中文名来源；标为「待查」的条目需继续检索中文论文或专业名录',
     '- [ ] 图片确为该物种，作者与许可信息完整',
     ...(toxicity ? ['- [ ] 毒性等级适用于这个物种，且正文准确说明中毒途径和条件'] : []),
     '- [ ] 文字准确、通顺，体型、数量等具体数据已对照权威资料'
@@ -451,20 +484,20 @@ function speciesReport(built, output, distribution, toxicity, review) {
 function pullRequestText(results, failures, asked) {
   const species = results.map(result => result.species);
   const title = species.length === 1
-    ? `自动新增：${species[0].name_zh}（${species[0].scientific_name}）`
-    : `自动新增 ${species.length} 个物种：${species.slice(0, 5).map(item => item.name_zh).join('、')}${species.length > 5 ? ' 等' : ''}`;
+    ? `自动新增：${species[0].name_zh || species[0].scientific_name}（${species[0].scientific_name}）`
+    : `自动新增 ${species.length} 个物种：${species.slice(0, 5).map(item => item.name_zh || item.scientific_name).join('、')}${species.length > 5 ? ' 等' : ''}`;
   const listed = models => [...new Set(models.filter(Boolean))].map(model => `\`${model}\``).join('、');
   const reviewers = listed(results.map(result => result.review?.model));
   const sections = species.length === 1
     ? [results[0].report]
-    : results.flatMap(result => [`## ${result.species.name_zh}（*${result.species.scientific_name}*）`, '', result.report, '']);
+    : results.flatMap(result => [`## ${result.species.name_zh || result.species.scientific_name}（*${result.species.scientific_name}*）`, '', result.report, '']);
   const failed = failures.length ? ['', '## 未能生成', '', ...failures.map(item => `- ${item.target}：${item.message.split('\n')[0]}`), ''] : [];
   const body = [
     `由 \`scripts/auto-species.mjs\` 自动生成，文字模型：${listed(results.map(result => result.model))}${reviewers ? `，核查模型：${reviewers}` : ''}。`
       + '介绍文字为待审核草稿；即使启用了第二轮 AI 检查，也不能代替人工核实。',
     '',
     ...(asked ? [
-      `按要求挑选：${quote(asked.request)} → 在 GBIF 的 *${asked.group}*（${RANK_ZH[asked.rank]}）下、图鉴尚未收录的物种中由模型挑选`
+      `按要求挑选：${quote(asked.request)} → 在 GBIF 的 *${asked.group}*（${RANK_ZH[asked.rank]}）下、图鉴尚未收录的物种中${asked.criteria ? '由模型按条件挑选' : '按学名稳定抽样'}`
         + `${asked.criteria ? `，其他要求：${clean(asked.criteria)}` : ''}${asked.reason ? `。挑选思路：${clean(asked.reason)}` : ''}`
         + `。要求 ${asked.wanted} 个，挑到 ${asked.found} 个；请确认所选物种符合要求。`,
       ''
@@ -514,8 +547,8 @@ async function generate(record, taxa, { plan, replace }) {
     if ([...taxa.values()].some(taxon => taxon.parent_id === replaced.id)) throw new Error(`${replaced.id} has sub-taxa and cannot be replaced automatically`);
     taxa.delete(replaced.id);
   }
-  console.warn(`Gathering facts for ${record.canonicalName} from GBIF, Wikidata, Wikipedia and Wikimedia Commons…`);
-  const gathered = await gather(taxa, record).catch(error => {
+  console.warn(`Gathering facts for ${record.canonicalName} from GBIF, Wikidata and Wikimedia Commons…`);
+  const gathered = await gather(taxa, record, { plan }).catch(error => {
     throw /already in the catalog/.test(error.message) ? new Error(`${error.message}. Use --replace to regenerate it.`) : error;
   });
   const species = gathered.entries.at(-1);
@@ -525,9 +558,9 @@ async function generate(record, taxa, { plan, replace }) {
       parent_id: gathered.parentId,
       entries: gathered.entries.map(entry => ({
         id: entry.id, rank: entry.rank, scientific_name: entry.scientific_name, gbif: gbifSpeciesUrl(entry.gbif_key),
-        name_zh: entry.wikidata?.name_zh ?? null, wikidata: entry.wikidata?.url ?? null,
-        articles: entry.articles.map(article => ({ url: article.url, characters: article.text.length,
-          read_by_model: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang]).length })),
+        name_zh: chineseName(entry) || null, name_source: entry.nameRecord?.url ?? entry.wikidata?.url ?? null, wikidata: entry.wikidata?.url ?? null,
+        articles: entry.articles.map(article => ({ kind: article.kind, url: article.url, characters: article.text.length,
+          read_for_check: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang] ?? 15000).length })),
         authorship: entry.authorship ?? null
       })),
       conservation_status: species.status?.code ?? null,
@@ -538,7 +571,8 @@ async function generate(record, taxa, { plan, replace }) {
   }
 
   const written = await writeProse(gathered);
-  const result = process.env.LLM_REVIEW === 'on' ? { ...written, ...(await reviewProse(gathered, written.output)) } : { ...written, review: null };
+  console.warn(`Checking the draft against ${species.articles.map(article => articleName(article)).join(', ')} for ${record.canonicalName}…`);
+  const result = { ...written, ...(await reviewProse(gathered, written.output)) };
   const distribution = species.regionProblem
     ? { regions: [], basis: null, note: species.regionProblem }
     : selectDistribution(result.output.distribution, species.regionCandidates, REGION_PARENTS);
@@ -588,8 +622,8 @@ async function main() {
   const results = [];
   const plans = [];
   const failures = [];
-  if (asked && asked.found < asked.wanted) {
-    failures.push({ target: '按要求挑选', message: `要求 ${asked.wanted} 个，只挑到 ${asked.found} 个符合要求且有 IUCN 评估的物种` });
+  if (asked && asked.summary.found < asked.summary.wanted) {
+    failures.push({ target: '按要求挑选', message: `要求 ${asked.summary.wanted} 个，只找到 ${asked.summary.found} 个符合要求且有参考资料的物种` });
   }
   let branch = null;
 

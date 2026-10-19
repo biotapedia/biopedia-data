@@ -1,7 +1,7 @@
 // Open data sources for scripts/auto-species.mjs. Facts come from here, never from the language model:
 // GBIF Backbone Taxonomy (CC BY 4.0) for names and classification, IUCN categories and observation records as
-// served by GBIF, Wikidata (CC0) for Chinese names, Wikipedia as the reference the facts are extracted from, and
-// Wikimedia Commons for freely licensed images.
+// served by GBIF, Wikidata (CC0) for Chinese names, Wikipedia and indexed scholarly abstracts for fact checking,
+// and Wikimedia Commons for freely licensed images.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,7 +17,11 @@ const ZH_LABELS = ['zh-cn', 'zh-hans', 'zh'];
 async function getJson(url, { retries = 2 } = {}) {
   for (let attempt = 0; ; attempt++) {
     try {
-      const response = await fetch(url, { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(20000) });
+      const headers = { 'user-agent': USER_AGENT };
+      if (new URL(url).host === 'api.openalex.org' && process.env.OPENALEX_API_KEY) {
+        headers.authorization = `Bearer ${process.env.OPENALEX_API_KEY}`;
+      }
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(20000) });
       if (response.status === 204 || response.status === 404) return null;
       if (response.status === 429 || response.status >= 500) throw new Error(`HTTP ${response.status}`);
       if (!response.ok) throw Object.assign(new Error(`${url}: HTTP ${response.status}`), { final: true });
@@ -140,15 +144,85 @@ const MIN_IMAGE_WIDTH = 800;
 // read when they exist: the English article is usually the more detailed one, and two sources let the facts be cross-checked.
 export async function wikiArticles(articles, { intro = false } = {}) {
   const found = [];
+  const errors = [];
   for (const lang of ['zh', 'en']) {
     if (!articles?.[lang]) continue;
-    const page = (await getJson(`${WIKIPEDIA[lang]}/w/api.php?${query({
-      action: 'query', prop: 'extracts|info', explaintext: '1', exsectionformat: 'wiki', inprop: 'url', titles: articles[lang],
-      redirects: '1', ...(intro ? { exintro: '1' } : {}), ...(lang === 'zh' ? { variant: 'zh-cn' } : {}), format: 'json', formatversion: '2'
-    })}`))?.query?.pages?.[0];
-    if (page?.extract?.trim()) found.push({ lang, title: page.title, url: page.fullurl, text: page.extract });
+    try {
+      const page = (await getJson(`${WIKIPEDIA[lang]}/w/api.php?${query({
+        action: 'query', prop: 'extracts|info', explaintext: '1', exsectionformat: 'wiki', inprop: 'url', titles: articles[lang],
+        redirects: '1', ...(intro ? { exintro: '1' } : {}), ...(lang === 'zh' ? { variant: 'zh-cn' } : {}), format: 'json', formatversion: '2'
+      })}`))?.query?.pages?.[0];
+      if (page?.extract?.trim()) found.push({ kind: 'wikipedia', lang, title: page.title, url: page.fullurl, text: page.extract });
+    } catch (error) {
+      errors.push(`${lang} ${articles[lang]}: ${error.message}`);
+    }
   }
+  if (errors.length && !found.length) throw new Error(errors.join('; '));
   return found;
+}
+
+// OpenAlex indexes scholarly abstracts as an inverted word-position map. Restore only the abstract, never full text.
+export function abstractFromIndex(index) {
+  if (!index || typeof index !== 'object' || Array.isArray(index)) return '';
+  const words = [];
+  for (const [word, positions] of Object.entries(index)) {
+    if (!Array.isArray(positions)) continue;
+    for (const position of positions) {
+      if (Number.isInteger(position) && position >= 0 && position < 4000) words[position] = word;
+    }
+  }
+  return words.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+// An indexed paper is usable only when its title or abstract identifies the exact species binomial.
+export function scholarlyAbstracts(results, scientificName) {
+  const exact = new RegExp(`(^|[^A-Za-z])${scientificName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z]|$)`, 'i');
+  return (results ?? []).flatMap(work => {
+    const text = abstractFromIndex(work.abstract_inverted_index);
+    const url = work.doi || work.id;
+    if ((!exact.test(text) && !exact.test(work.title ?? '')) || text.length < 120 || !isHttpsUrl(url) || !work.title) return [];
+    return [{ kind: 'scholarly', lang: 'en', title: work.title, url, text }];
+  }).slice(0, 3);
+}
+
+export async function scholarlyArticles(scientificName) {
+  const params = query({ search: `"${scientificName}"`, filter: 'has_abstract:true', per_page: '10',
+    select: 'id,title,doi,abstract_inverted_index' });
+  const result = await getJson(`https://api.openalex.org/works?${params}`);
+  return scholarlyAbstracts(result?.results, scientificName);
+}
+
+// GBIF descriptions are attached to the exact taxon key; the source itself may be a cited checklist.
+export async function gbifDescriptions(key) {
+  const result = await getJson(`${GBIF}/species/${key}/descriptions?limit=20`);
+  return (result?.results ?? []).flatMap(item => {
+    const text = String(item.description ?? '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text.length < 120) return [];
+    return [{ kind: 'gbif-description', lang: item.language === 'zho' ? 'zh' : 'en',
+      title: item.source || 'GBIF 物种描述', url: gbifSpeciesUrl(key), text }];
+  }).slice(0, 3);
+}
+
+// Prefer a species' own encyclopedia page; try indexed research and GBIF descriptions when none exists.
+export async function speciesReferenceArticles(key, scientificName, wikidata) {
+  const exact = new RegExp(`(^|[^A-Za-z])${scientificName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z]|$)`, 'i');
+  const providers = [
+    ['Wikipedia', async () => (await wikiArticles(wikidata?.articles)).filter(article => exact.test(`${article.title} ${article.text.slice(0, 600)}`))],
+    ['Wikipedia title search', async () => (await wikiArticles({ en: scientificName })).filter(article => exact.test(`${article.title} ${article.text.slice(0, 600)}`))],
+    ['OpenAlex', () => scholarlyArticles(scientificName)],
+    ['GBIF descriptions', () => gbifDescriptions(key)]
+  ];
+  const errors = [];
+  for (const [name, lookup] of providers) {
+    try {
+      const articles = await lookup();
+      if (articles.length) return articles;
+    } catch (error) {
+      errors.push(`${name}: ${error.message}`);
+    }
+  }
+  if (errors.length) throw new Error(`Reference lookup incomplete for ${scientificName}: ${errors.join('; ')}`);
+  return [];
 }
 
 // The picture the Wikipedia editors chose to head the article.

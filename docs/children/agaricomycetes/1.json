@@ -1,0 +1,17 @@
+{
+  "parent_id": "agaricomycetes",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "agaricales",
+      "parent_id": "agaricomycetes",
+      "rank": "order",
+      "scientific_name": "Agaricales",
+      "name_zh": "伞菌目",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

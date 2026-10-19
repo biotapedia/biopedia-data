@@ -1,0 +1,17 @@
+{
+  "parent_id": "agaricales",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "amanitaceae",
+      "parent_id": "agaricales",
+      "rank": "family",
+      "scientific_name": "Amanitaceae",
+      "name_zh": "鹅膏菌科",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

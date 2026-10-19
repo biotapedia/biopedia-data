@@ -1,0 +1,17 @@
+{
+  "parent_id": "basidiomycota",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "agaricomycetes",
+      "parent_id": "basidiomycota",
+      "rank": "class",
+      "scientific_name": "Agaricomycetes",
+      "name_zh": "伞菌纲",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

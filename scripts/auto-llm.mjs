@@ -59,44 +59,49 @@ export async function chatJson(system, user, { label, model = process.env.LLM_MO
 
 export const WRITE_PROMPT = `你是「万物图鉴」的科普编辑。请用简体中文为分类条目撰写原创、详尽而可靠的介绍。
 
-输入里有每个条目的学名、中文名、分类位置、保护等级，以及参考文章节选 references（中文和/或英文维基百科，可能为空数组）。
+输入里只有已核对的学名、分类位置、部分中文名和保护等级。请先独立写出介绍；系统会用预先找到、但未提供给你的资料逐句核查。
 
 真实性（最重要，宁可少写也不能写错）：
-1. 学名、分类位置、中文名和保护等级是权威数据，必须与之一致。
-2. 事实以 references 为主要依据。references 里没有、但属于学界公认且你确知的内容可以补充；任何拿不准的内容都不要写。
-3. 具体数字（体长、体重、寿命、妊娠期、窝仔数、种群数量、海拔等）、年份、人名、地名和亚种名只能取自 references，并忠实转述原来的数值和范围，不要自行换算、取整或推断；references 里没有就改用定性说法（如“体型较大”“主要分布在亚洲南部”）。中英文参考说法不一致时，采用更保守、更概括的说法。
-4. 不要编造研究、文献或“有研究表明”之类没有出处的说法；不要把属、科或近似种的特征安到这个物种身上；不要把个别地区、个别亚种或圈养个体的情况说成整个物种的情况；不要用“最大”“唯一”“最早”等绝对说法，除非 references 明确这样说。
+1. 学名、分类位置、已给出的中文名和保护等级必须与输入一致。name_zh 为 null 只表示本次数据检索未找到，不等于该物种没有中文名。
+2. 用自己的知识独立组织介绍，但任何拿不准的内容都不要写。不要为补足篇幅编造细节。
+3. 不写未经输入证实的具体数字、年份、人名、地点、亚种名或“最大”“唯一”等绝对说法。分布、生境和毒性等事实会在下一轮对照资料核查。
+4. 不要编造研究或文献；不要把属、科或近似种的特征安到这个物种身上。
 
 写作：
-5. 全部用自己的话原创表述，不要复述、改写或拼接参考文章的句子，英文参考也不要逐句翻译。
-6. 正文里不要出现标题标记、列表、引用、链接、网址、图片或 HTML。资料来源由系统另行添加。
-7. 物种（species）：通常写 3–5 个带小标题的段落，全文约 400–800 字。优先介绍可辨认的形态、分布与栖息地、生态习性和保护现状；其他主题只有 references 有足够资料时才写。资料少时可以更短，不要为凑段落和字数补充未经证实的细节或重复内容。
-8. 上级分类（ancestors）：每个只写一个段落，heading 为空字符串，约 60–180 字，概括资料支持的共同特征和主要类群。顺序和 scientific_name 与输入保持一致。
-9. name_zh：输入里已给出时原样返回；为 null 时给出中国大陆通用的规范中文名，没有把握就返回空字符串。
-10. distribution：distribution_candidates 是 GBIF 有观察或标本记录的地区（可能包含引入、逃逸和误认记录，records 不是个体数量）。只选 references 明确支持的**原生分布**地区；逐区判断，不确定的地区不要选。有至少一个确定地区时 confidence 为 "high"，regions 只能填候选列表中的 id，reason 简述参考依据；references 没有分布依据或一个地区也不能确定时返回 {"confidence":"low","regions":[],"reason":""}。脚本会在这种情况下另行展示 GBIF 有记录地区，并明确标注其含义。
-11. toxicity：这是给物种卡片显示的概略毒性标签，不是统一的医学等级。只能在该**物种本身**的 references 明确描述毒性时填写；不能把属或近似种的毒性套用过来，也不能因资料没提毒性就填“无毒”。level 只能是 "none"（明确无毒）、"mild"（微毒）、"toxic"（有毒，程度不明）、"high"（明确剧毒或可致命）；evidence 必须逐字复制 species references 中支持该等级的 8–200 字连续片段。没有直接依据时填 null。正文中应说明资料提到的中毒途径，不能把食用毒性写成接触毒性。
-12. claims_to_verify：列出物种介绍里最需要审核人再核实的说法，尤其是具体数字、分布范围、毒性，以及不是来自 references 的内容，每条一句话。
+5. 全部用自己的话原创表述，不要复述记忆中的百科句子。
+6. 正文里不要出现标题标记、列表、引用、链接、网址、图片或 HTML，也不要写“参考资料指出”“提供的材料未提及”等写作过程用语。资料来源由系统另行添加。
+7. 物种（species）：通常写 3–5 个带小标题的段落，全文约 400–800 字。优先介绍有把握的形态、分布与栖息地、生态习性和保护现状；资料少时可以更短。
+8. 上级分类（ancestors）：每个只写一个段落，heading 为空字符串，约 60–180 字。顺序和 scientific_name 与输入保持一致。
+9. name_zh：输入里已给出时原样返回；为 null 时返回空字符串，绝不能拟造中文名。
+10. distribution 固定返回 {"confidence":"low","regions":[],"reason":""}；toxicity 固定返回 null。这两项须在资料核查阶段确定。
+11. claims_to_verify：列出介绍中的可核查事实，尤其是分布、形态、生态习性、毒性等，每条一句话。
 
 只输出一个 JSON 对象，不要输出其他任何内容：
-{"species":{"name_zh":"…","paragraphs":[{"heading":"…","text":"…"}],"toxicity":{"level":"toxic","evidence":"参考文章中的原文片段"}},"ancestors":[{"scientific_name":"…","name_zh":"…","paragraphs":[{"heading":"","text":"…"}]}],"distribution":{"confidence":"high","regions":["tdwg-40"],"reason":"…"},"claims_to_verify":["…"]}`;
+{"species":{"name_zh":"…","paragraphs":[{"heading":"…","text":"…"}],"toxicity":null},"ancestors":[{"scientific_name":"…","name_zh":"…","paragraphs":[{"heading":"","text":"…"}]}],"distribution":{"confidence":"low","regions":[],"reason":""},"claims_to_verify":["…"]}`;
 
-// A second, independent pass over the finished draft. It returns exact passages to replace rather than a rewritten
+// A mandatory source-check pass over the finished draft. It returns exact passages to replace rather than a rewritten
 // text, so the script can apply, check and list every change, and nothing else in the draft moves.
-export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。另一位编辑根据参考资料写了下列条目的介绍，请逐句核对其中的事实，并把发现的问题直接改好。
+export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。另一位编辑未读取参考资料就写了下列条目的介绍，请逐句核对其中的事实，并把发现的问题直接改好。
 
 输入：
 - facts：权威数据（学名、分类位置、中文名、保护等级），一律以此为准。
-- references：每个条目的参考文章节选（中文和/或英文维基百科）。
+- references：每个条目的参考资料节选，可能来自维基百科、学术论文摘要或 GBIF 物种描述。学术摘要只覆盖论文讨论的范围，不能据此推断未提及的特征。
+- distribution_candidates：GBIF 有记录地区，只能在参考文章明确支持原生分布时选用。
 - drafts：待核对的介绍。
 - writer_doubts：作者自己也没有把握的说法，每一条都要核对并处理。
 
-核对方法：把每一个事实性说法（数字和范围、年份、分布、生境、食性、习性、繁殖、分类关系、保护等级与保护措施等）与 facts 和 references 对照，有问题就直接给出改好的文字，不要只是指出问题：
+核对方法：把每一个事实性说法（数字和范围、年份、分布、生境、食性、习性、繁殖、分类关系、保护等级与保护措施等）与 facts 和 references 对照。references 缺失不能当成事实已获证实。有问题就直接给出改好的文字，不要只是指出问题：
 - 与 facts 或 references 矛盾：改成 references 的说法。
 - 数字与 references 不符：改成 references 中的数字和范围。
 - 中英文 references 说法不一致（例如不同年份的调查数字、不同的体型范围）：改成两者都能支持的说法，例如取能涵盖两者的范围、写“约”或“数千只”这样的概数，或者去掉数字改用定性说法；不要挑其中一个写成确定的事实。
 - references 里没有依据、也不是学界公认常识的说法，尤其是具体数字、年份、人名、地名、亚种名和“最大”“唯一”“最早”等绝对说法：改成 references 支持的说法，或改成不含具体细节的定性说法，实在无法保留就删去。
 - 把属、科或近似种的特征，或者个别地区、个别亚种、圈养个体的情况说成整个物种的：改正范围。
+- 特别核对比较句和代词的指代，避免把邻近物种的毒性、剂量或其他事实移到目标物种。
 - 有依据的内容一律不动；不要润色文字、调整风格，也不要增加 references 里没有的新内容。
+
+另外依据 references 独立给出：
+- distribution：只选有参考文章明确支持的原生分布区域；无依据时 confidence 为 low、regions 为空。地区 id 必须来自 distribution_candidates。
+- toxicity：只在物种自身的参考文章明确支持时填等级和逐字复制的 8–200 字 evidence；否则为 null。等级为 none、mild、toxic、high。不要把食用毒性写成接触毒性。
 
 改法：每处修改给出
 - scientific_name：所属条目的学名；
@@ -105,7 +110,7 @@ export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。�
 - reason：一句话说明原来错在哪里、改后的依据是什么。
 
 只输出一个 JSON 对象，不要输出其他任何内容：
-{"corrections":[{"scientific_name":"…","original":"…","replacement":"…","reason":"…"}],"doubts":["…"]}
+{"corrections":[{"scientific_name":"…","original":"…","replacement":"…","reason":"…"}],"doubts":["…"],"distribution":{"confidence":"low","regions":[],"reason":""},"toxicity":null}
 没有需要改正的地方时 corrections 为空数组。能改好的一律直接改，不要放进 doubts；doubts 只列出改完之后仍然留在正文里、你无法从 references 确认、又不宜删去的说法，每条一句话，通常应为空数组。`;
 
 // --ask, step one: the request in words becomes a taxon to search GBIF under. The model only names the group; the
@@ -132,8 +137,8 @@ export const PICK_PROMPT = `你是「万物图鉴」的编辑，要从候选名�
 
 要求：
 1. 只能从 candidates 中挑选，学名原样复制，不要改动拼写，不要加入名单之外的物种。
-2. 首先满足 request 和 criteria；在此基础上，优先挑选知名、有代表性、资料较多（例如有维基百科条目）的现生物种，避开化石种和极少被研究的物种。
-3. 按优先顺序列出，最多 max_listed 个：前 count 个是首选，其余作为备选。脚本会跳过没有 IUCN 评估的物种并依次补位。符合要求的物种不够时如实少列，不要凑数。
+2. 只按 request 和 criteria 中明确提出的条件挑选。不要自行附加知名度、资料多少、维基百科条目或 IUCN 评估要求；用户明确要求其中某项时才考虑。
+3. 按匹配用户条件的程度列出，最多 max_listed 个：前 count 个是首选，其余作为备选。符合要求的物种不够时如实少列，不要凑数。
 4. reason 用一句话说明挑选思路。
 
 只输出一个 JSON 对象，不要输出其他任何内容：
@@ -187,5 +192,10 @@ export function reviewShapeProblem(output) {
   if (output.doubts !== undefined && !(Array.isArray(output.doubts) && output.doubts.every(item => typeof item === 'string'))) {
     return 'doubts 必须是字符串数组';
   }
+  if (output.distribution !== undefined && (!output.distribution || !['high', 'low'].includes(output.distribution.confidence) ||
+      !Array.isArray(output.distribution.regions) || !output.distribution.regions.every(item => typeof item === 'string') ||
+      typeof output.distribution.reason !== 'string')) return 'distribution 格式错误';
+  if (output.toxicity !== undefined && output.toxicity !== null && (!output.toxicity || typeof output.toxicity !== 'object' ||
+      typeof output.toxicity.level !== 'string' || typeof output.toxicity.evidence !== 'string')) return 'toxicity 格式错误';
   return null;
 }

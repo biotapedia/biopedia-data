@@ -1,0 +1,17 @@
+{
+  "parent_id": "amanitaceae",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "amanita",
+      "parent_id": "amanitaceae",
+      "rank": "genus",
+      "scientific_name": "Amanita",
+      "name_zh": "鹅膏菌属",
+      "image_url": null,
+      "child_count": 16
+    }
+  ]
+}

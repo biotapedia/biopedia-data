@@ -31,7 +31,7 @@ concurrency:
 jobs:
   propose:
     runs-on: ubuntu-latest
-    # Up to three writing calls per species, plus two optional review calls when LLM_REVIEW=on.
+    # Up to three writing calls per species, plus two mandatory source-check calls.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@v4
@@ -51,6 +51,6 @@ jobs:
           LLM_JSON_MODE: ${{ vars.LLM_JSON_MODE }}
           LLM_TIMEOUT: ${{ vars.LLM_TIMEOUT }}
           LLM_MAX_TOKENS: ${{ vars.LLM_MAX_TOKENS }}
-          LLM_REVIEW: ${{ vars.LLM_REVIEW }}
           LLM_REVIEW_MODEL: ${{ vars.LLM_REVIEW_MODEL }}
+          OPENALEX_API_KEY: ${{ secrets.OPENALEX_API_KEY }}
           GH_TOKEN: ${{ github.token }}

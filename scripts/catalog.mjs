@@ -51,7 +51,8 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   if (typeof scientificName !== 'string' || scientificName.length < 2 || scientificName.length > 160) {
     throw new Error(`${filename}: invalid scientific_name`);
   }
-  if (typeof nameZh !== 'string' || nameZh.length < 1 || nameZh.length > 120) {
+  // An empty string means that no sourced Chinese name has been found yet.
+  if (typeof nameZh !== 'string' || nameZh.length > 120) {
     throw new Error(`${filename}: invalid name_zh`);
   }
   for (const key of ['image_url', 'image_credit', 'source_url']) {
