@@ -1,0 +1,28 @@
+{
+  "parent_id": "ursus",
+  "page": 1,
+  "total": 2,
+  "next": null,
+  "items": [
+    {
+      "id": "ursus-americanus",
+      "parent_id": "ursus",
+      "rank": "species",
+      "scientific_name": "Ursus americanus",
+      "name_zh": "美洲黑熊",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/6e/Canadian_Rockies_-_the_bear_at_Lake_Louise.jpg/1280px-Canadian_Rockies_-_the_bear_at_Lake_Louise.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "ursus-arctos",
+      "parent_id": "ursus",
+      "rank": "species",
+      "scientific_name": "Ursus arctos",
+      "name_zh": "棕熊",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/7/7d/Brown_bear.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}

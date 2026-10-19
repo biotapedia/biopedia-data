@@ -1,0 +1,28 @@
+{
+  "parent_id": "catopuma",
+  "page": 1,
+  "total": 2,
+  "next": null,
+  "items": [
+    {
+      "id": "catopuma-temminckii",
+      "parent_id": "catopuma",
+      "rank": "species",
+      "scientific_name": "Catopuma temminckii",
+      "name_zh": "金猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d7/Asian_Golden_cat.jpg/1280px-Asian_Golden_cat.jpg",
+      "conservation_status": "VU",
+      "child_count": 0
+    },
+    {
+      "id": "catopuma-badia",
+      "parent_id": "catopuma",
+      "rank": "species",
+      "scientific_name": "Catopuma badia",
+      "name_zh": "婆罗洲金猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/ba/Bay_cat_1_Jim_Sanderson-cropped.jpg/1280px-Bay_cat_1_Jim_Sanderson-cropped.jpg",
+      "conservation_status": "EN",
+      "child_count": 0
+    }
+  ]
+}

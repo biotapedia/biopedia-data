@@ -1,0 +1,18 @@
+{
+  "parent_id": "leptailurus",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "leptailurus-serval",
+      "parent_id": "leptailurus",
+      "rank": "species",
+      "scientific_name": "Leptailurus serval",
+      "name_zh": "薮猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/%E8%97%AA%E8%B2%93%E6%A8%99%E6%9C%AC.jpg/1280px-%E8%97%AA%E8%B2%93%E6%A8%99%E6%9C%AC.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}

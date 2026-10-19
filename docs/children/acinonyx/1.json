@@ -1,0 +1,18 @@
+{
+  "parent_id": "acinonyx",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "acinonyx-jubatus",
+      "parent_id": "acinonyx",
+      "rank": "species",
+      "scientific_name": "Acinonyx jubatus",
+      "name_zh": "猎豹",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/0/09/TheCheethcat.jpg",
+      "conservation_status": "VU",
+      "child_count": 0
+    }
+  ]
+}

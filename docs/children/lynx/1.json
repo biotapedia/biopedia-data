@@ -1,0 +1,48 @@
+{
+  "parent_id": "lynx",
+  "page": 1,
+  "total": 4,
+  "next": null,
+  "items": [
+    {
+      "id": "lynx-rufus",
+      "parent_id": "lynx",
+      "rank": "species",
+      "scientific_name": "Lynx rufus",
+      "name_zh": "短尾猫",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dc/Bobcat2.jpg/1280px-Bobcat2.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "lynx-canadensis",
+      "parent_id": "lynx",
+      "rank": "species",
+      "scientific_name": "Lynx canadensis",
+      "name_zh": "加拿大猞猁",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/52/Canada_lynx_by_Michael_Zahra.jpg/1280px-Canada_lynx_by_Michael_Zahra.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "lynx-lynx",
+      "parent_id": "lynx",
+      "rank": "species",
+      "scientific_name": "Lynx lynx",
+      "name_zh": "猞猁",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/49/Lynx_Nationalpark_Bayerischer_Wald_01.jpg/1280px-Lynx_Nationalpark_Bayerischer_Wald_01.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "lynx-pardinus",
+      "parent_id": "lynx",
+      "rank": "species",
+      "scientific_name": "Lynx pardinus",
+      "name_zh": "伊比利亚猞猁",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3b/Lince_ib%C3%A9rico_%28Lynx_pardinus%29%2C_Almuradiel%2C_Ciudad_Real%2C_Espa%C3%B1a%2C_2021-12-19%2C_DD_07.jpg/1280px-Lince_ib%C3%A9rico_%28Lynx_pardinus%29%2C_Almuradiel%2C_Ciudad_Real%2C_Espa%C3%B1a%2C_2021-12-19%2C_DD_07.jpg",
+      "conservation_status": "VU",
+      "child_count": 0
+    }
+  ]
+}

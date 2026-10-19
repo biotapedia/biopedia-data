@@ -1,0 +1,44 @@
+{
+  "parent_id": "ursidae",
+  "page": 1,
+  "total": 4,
+  "next": null,
+  "items": [
+    {
+      "id": "melursus",
+      "parent_id": "ursidae",
+      "rank": "genus",
+      "scientific_name": "Melursus",
+      "name_zh": "懒熊属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "helarctos",
+      "parent_id": "ursidae",
+      "rank": "genus",
+      "scientific_name": "Helarctos",
+      "name_zh": "马来熊属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "ailuropoda",
+      "parent_id": "ursidae",
+      "rank": "genus",
+      "scientific_name": "Ailuropoda",
+      "name_zh": "猫熊属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "ursus",
+      "parent_id": "ursidae",
+      "rank": "genus",
+      "scientific_name": "Ursus",
+      "name_zh": "熊属",
+      "image_url": null,
+      "child_count": 2
+    }
+  ]
+}

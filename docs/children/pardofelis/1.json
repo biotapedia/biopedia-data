@@ -1,0 +1,18 @@
+{
+  "parent_id": "pardofelis",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "pardofelis-marmorata",
+      "parent_id": "pardofelis",
+      "rank": "species",
+      "scientific_name": "Pardofelis marmorata",
+      "name_zh": "云猫",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/3/3f/Marbled_cat_borneo.jpg",
+      "conservation_status": "NT",
+      "child_count": 0
+    }
+  ]
+}

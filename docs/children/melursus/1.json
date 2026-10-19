@@ -1,0 +1,18 @@
+{
+  "parent_id": "melursus",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "melursus-ursinus",
+      "parent_id": "melursus",
+      "rank": "species",
+      "scientific_name": "Melursus ursinus",
+      "name_zh": "懒熊",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/3/37/Sloth_bear_1.jpg",
+      "conservation_status": "VU",
+      "child_count": 0
+    }
+  ]
+}
