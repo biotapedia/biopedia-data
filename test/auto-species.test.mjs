@@ -29,6 +29,11 @@ test('a species joins the deepest existing taxon of the same rank and name', () 
   assert.equal(plan.parentId, 'carnivora');
   assert.deepEqual(plan.missing.map(entry => entry.scientific_name), ['Ursidae', 'Ailuropoda']);
   assert.throws(() => planLineage(taxa, { ...tiger, canonicalName: 'Panthera leo' }), /already in the catalog/);
+  // A species filed under a newer name than GBIF's is recognised by its GBIF record.
+  taxa.set('otocolobus-manul', {
+    id: 'otocolobus-manul', parent_id: 'felidae', rank: 'species', scientific_name: 'Otocolobus manul', source_url: 'https://www.gbif.org/species/2435023'
+  });
+  assert.throws(() => planLineage(taxa, { ...tiger, key: 2435023, canonicalName: 'Felis manul', genus: 'Felis' }), /as Otocolobus manul/);
 });
 
 test('ids are slugs of the scientific name and never collide', () => {

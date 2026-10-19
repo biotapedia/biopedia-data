@@ -1,8 +1,8 @@
 ---
-id: "felis-manul"
-parent_id: "felis"
+id: "otocolobus-manul"
+parent_id: "otocolobus"
 rank: "species"
-scientific_name: "Felis manul"
+scientific_name: "Otocolobus manul"
 name_zh: "兔狲"
 image_url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Manul2.jpg/1280px-Manul2.jpg"
 image_credit: "作者：Karin Sturzenegger \"Das Foto darf benutzt werden, solange Karin Sturzenegger als · 许可：CC BY-SA 3.0 · 来源：Wikimedia Commons"
@@ -30,7 +30,7 @@ conservation_status: "LC"
 
 ## 资料来源
 
-- 学名与分类：[GBIF Backbone Taxonomy](https://www.gbif.org/species/2435023)（CC BY 4.0）
+- 学名与分类：IUCN 猫科专家组 2017 年修订的猫科分类（Kitchener et al., *Cat News* Special Issue 11）；[GBIF Backbone Taxonomy](https://www.gbif.org/species/2435023) 仍记为 Felis manul（CC BY 4.0）
 - 中文名：[Wikidata Q166794](https://www.wikidata.org/wiki/Q166794)（CC0）
 - 参考资料：[中文维基百科「兔猻」](https://zh.wikipedia.org/wiki/%E5%85%94%E7%8C%BB)（CC BY-SA 4.0；仅作参考，文字为重新撰写）
 - 参考资料：[英文维基百科「Pallas's cat」](https://en.wikipedia.org/wiki/Pallas%27s_cat)（CC BY-SA 4.0；仅作参考，文字为重新撰写）

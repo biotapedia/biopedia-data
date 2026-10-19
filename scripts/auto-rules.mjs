@@ -21,12 +21,20 @@ export function uniqueId(base, rank, taken) {
   }
 }
 
+// The GBIF record a taxon was taken from, read from its source_url, or null.
+export const gbifKeyOf = taxon => String(taxon.source_url ?? '').match(/^https:\/\/www\.gbif\.org\/species\/(\d+)$/)?.[1] ?? null;
+
 // Finds where a GBIF species record joins the existing tree: the deepest existing taxon with the same rank and name.
 // Everything below it on the GBIF lineage must be created.
 export function planLineage(taxa, record) {
   const lower = value => value.toLowerCase();
   if ([...taxa.values()].some(taxon => lower(taxon.scientific_name) === lower(record.canonicalName))) {
     throw new Error(`${record.canonicalName} is already in the catalog`);
+  }
+  // Editors may file a species under a newer name than GBIF's (Felis manul as Otocolobus manul); it keeps its GBIF record.
+  const renamed = [...taxa.values()].find(taxon => gbifKeyOf(taxon) === String(record.key));
+  if (renamed) {
+    throw new Error(`${record.canonicalName} is in the catalog as ${renamed.scientific_name} (${renamed.id}), classified apart from GBIF; edit it by hand`);
   }
   const lineage = LINEAGE_RANKS.filter(rank => record[rank] && record[`${rank}Key`])
     .map(rank => ({ rank, scientific_name: record[rank], gbif_key: record[`${rank}Key`] }));

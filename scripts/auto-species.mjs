@@ -21,7 +21,7 @@ import { parseArgs } from 'node:util';
 import { createTaxonMarkdown, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes } from './catalog.mjs';
 import { chatJson, LLM_SETTINGS, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT, writingShapeProblem } from './auto-llm.mjs';
 import {
-  applyCorrections, clean, composeBody, copiedPassage, COPY_RUN, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
+  applyCorrections, clean, composeBody, copiedPassage, COPY_RUN, gbifKeyOf, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
   planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
 } from './auto-rules.mjs';
 import {
@@ -69,6 +69,7 @@ function proposedIds() {
 
 async function pickCandidate(taxa, proposed) {
   const known = new Set([...taxa.values()].map(taxon => taxon.scientific_name.toLowerCase()));
+  const knownKeys = new Set([...taxa.values()].map(gbifKeyOf).filter(Boolean));
   const ancestry = id => {
     const chain = [];
     for (let taxon = taxa.get(id); taxon; taxon = taxa.get(taxon.parent_id)) chain.push(taxon);
@@ -88,7 +89,8 @@ async function pickCandidate(taxa, proposed) {
     let groupLookups = 0;
     for (const species of await gbifSpeciesUnder(record.key)) {
       const name = species.canonicalName;
-      if (!name || known.has(name.toLowerCase()) || proposed.has(slugify(name)) || checked.has(species.key)) continue;
+      if (!name || known.has(name.toLowerCase()) || knownKeys.has(String(species.key)) || proposed.has(slugify(name))
+        || checked.has(species.key)) continue;
       if (++groupLookups > MAX_GROUP_LOOKUPS) break;
       if (++lookups > MAX_CANDIDATE_LOOKUPS) throw new Error('No candidate found; pass --name');
       checked.add(species.key);

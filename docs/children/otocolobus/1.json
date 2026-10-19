@@ -1,0 +1,18 @@
+{
+  "parent_id": "otocolobus",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "otocolobus-manul",
+      "parent_id": "otocolobus",
+      "rank": "species",
+      "scientific_name": "Otocolobus manul",
+      "name_zh": "兔狲",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Manul2.jpg/1280px-Manul2.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}

@@ -1,7 +1,7 @@
 {
   "parent_id": "felis",
   "page": 1,
-  "total": 6,
+  "total": 5,
   "next": null,
   "items": [
     {
@@ -41,16 +41,6 @@
       "scientific_name": "Felis margarita",
       "name_zh": "沙漠猫",
       "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/SandCat12.jpg/1280px-SandCat12.jpg",
-      "conservation_status": "LC",
-      "child_count": 0
-    },
-    {
-      "id": "felis-manul",
-      "parent_id": "felis",
-      "rank": "species",
-      "scientific_name": "Felis manul",
-      "name_zh": "兔狲",
-      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9c/Manul2.jpg/1280px-Manul2.jpg",
       "conservation_status": "LC",
       "child_count": 0
     },

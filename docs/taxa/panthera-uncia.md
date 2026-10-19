@@ -1,8 +1,8 @@
 ---
-id: "uncia-uncia"
-parent_id: "uncia"
+id: "panthera-uncia"
+parent_id: "panthera"
 rank: "species"
-scientific_name: "Uncia uncia"
+scientific_name: "Panthera uncia"
 name_zh: "雪豹"
 image_url: "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/Irbis4.JPG/1280px-Irbis4.JPG"
 image_credit: "作者：Irbis1983 · 许可：Public domain · 来源：Wikimedia Commons"
@@ -14,7 +14,7 @@ conservation_status: "VU"
 
 ## 形态特征
 
-雪豹（学名Uncia uncia）属于猫科中体型居中、身体粗壮的猫科哺乳动物，四肢较短，耳朵小而圆，全身覆盖浓密的灰白色皮毛，头和颈部布有黑色斑点，背部、体侧和尾巴上则有较大的黑色斑块或类玫瑰花纹。它最显著的外形特征是尾巴异常长且粗壮，毛发蓬松，尾端可以盘绕成圆形，有助于在岩石地形中保持平衡，也能在寒冷天气里裹住口鼻保暖。黄绿色的虹膜在强光下会收缩为圆形。脚掌宽大并长有浓密脚毛，既能让它在深雪中行走时减少陷入，也能在陡峭湿滑的岩石表面提供抓地力，同时降低体热流失，这些都是适应高山寒冷环境的形态特征。
+雪豹（学名Panthera uncia）属于猫科中体型居中、身体粗壮的猫科哺乳动物，四肢较短，耳朵小而圆，全身覆盖浓密的灰白色皮毛，头和颈部布有黑色斑点，背部、体侧和尾巴上则有较大的黑色斑块或类玫瑰花纹。它最显著的外形特征是尾巴异常长且粗壮，毛发蓬松，尾端可以盘绕成圆形，有助于在岩石地形中保持平衡，也能在寒冷天气里裹住口鼻保暖。黄绿色的虹膜在强光下会收缩为圆形。脚掌宽大并长有浓密脚毛，既能让它在深雪中行走时减少陷入，也能在陡峭湿滑的岩石表面提供抓地力，同时降低体热流失，这些都是适应高山寒冷环境的形态特征。
 
 ## 分布与栖息地
 
@@ -30,7 +30,7 @@ conservation_status: "VU"
 
 ## 资料来源
 
-- 学名与分类：[GBIF Backbone Taxonomy](https://www.gbif.org/species/2435238)（CC BY 4.0）
+- 学名与分类：IUCN 猫科专家组 2017 年修订的猫科分类（Kitchener et al., *Cat News* Special Issue 11）；[GBIF Backbone Taxonomy](https://www.gbif.org/species/2435238) 仍记为 Uncia uncia（CC BY 4.0）
 - 中文名：[Wikidata Q30197](https://www.wikidata.org/wiki/Q30197)（CC0）
 - 参考资料：[中文维基百科「雪豹」](https://zh.wikipedia.org/wiki/%E9%9B%AA%E8%B1%B9)（CC BY-SA 4.0；仅作参考，文字为重新撰写）
 - 参考资料：[英文维基百科「Snow leopard」](https://en.wikipedia.org/wiki/Snow_leopard)（CC BY-SA 4.0；仅作参考，文字为重新撰写）

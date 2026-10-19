@@ -20,7 +20,7 @@
       "scientific_name": "Panthera",
       "name_zh": "豹属",
       "image_url": null,
-      "child_count": 4
+      "child_count": 5
     },
     {
       "id": "leopardus",
@@ -56,7 +56,7 @@
       "scientific_name": "Felis",
       "name_zh": "猫属",
       "image_url": null,
-      "child_count": 6
+      "child_count": 5
     },
     {
       "id": "puma",
@@ -95,11 +95,11 @@
       "child_count": 1
     },
     {
-      "id": "uncia",
+      "id": "otocolobus",
       "parent_id": "felidae",
       "rank": "genus",
-      "scientific_name": "Uncia",
-      "name_zh": "雪豹属",
+      "scientific_name": "Otocolobus",
+      "name_zh": "兔狲属",
       "image_url": null,
       "child_count": 1
     },
