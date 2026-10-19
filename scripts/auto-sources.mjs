@@ -63,6 +63,19 @@ export async function gbifSpeciesUnder(key, limit = 100) {
   return page?.results ?? [];
 }
 
+// Every accepted species under a taxon, page by page, up to `max`; `complete` is false when the taxon has more.
+export async function gbifAllSpeciesUnder(key, max) {
+  const species = [];
+  for (let offset = 0; offset < max; offset += 1000) {
+    const page = await getJson(`${GBIF}/species/search?${query({
+      highertaxonKey: key, rank: 'SPECIES', status: 'ACCEPTED', datasetKey: BACKBONE, limit: Math.min(1000, max - offset), offset
+    })}`);
+    species.push(...(page?.results ?? []));
+    if (!page || page.endOfRecords) return { species, complete: true };
+  }
+  return { species, complete: false };
+}
+
 export async function iucnStatus(key) {
   const result = await getJson(`${GBIF}/species/${key}/iucnRedListCategory`);
   return CONSERVATION_STATUSES.has(result?.code) ? { code: result.code, iucnTaxonID: result.iucnTaxonID ?? null } : null;

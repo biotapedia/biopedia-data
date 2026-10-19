@@ -293,7 +293,21 @@ export function parseSpeciesList(...texts) {
   return names;
 }
 
-export const IDS_MARKER = /<!-- auto-species-ids: ([a-z0-9,-]+) -->/;
+// The GBIF candidates the model picked, in its order, each once. Names that are not candidates (misspelt, invented, or
+// already in the catalog) are returned separately so they can be reported, never added.
+export function chosenCandidates(names, candidates) {
+  const byName = new Map(candidates.filter(item => item.canonicalName).map(item => [item.canonicalName.toLowerCase(), item]));
+  const chosen = [];
+  const unknown = [];
+  for (const name of names) {
+    const candidate = byName.get(String(name).replace(/\s+/g, ' ').trim().toLowerCase());
+    if (!candidate) unknown.push(name);
+    else if (!chosen.includes(candidate)) chosen.push(candidate);
+  }
+  return { chosen, unknown };
+}
+
+export const IDS_MARKER =/<!-- auto-species-ids: ([a-z0-9,-]+) -->/;
 
 // Species ids already proposed by earlier automated pull requests: from the branch name, and from the marker that a
 // batch pull request carries for all of its species.

@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
 import {
-  applyCorrections, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
+  applyCorrections, chosenCandidates, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
   paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
 } from '../scripts/auto-rules.mjs';
 import { REGION_PARENTS } from '../scripts/catalog.mjs';
+import { askShapeProblem, pickShapeProblem } from '../scripts/auto-llm.mjs';
 
 const tiger = {
   key: 5219416, canonicalName: 'Panthera tigris',
@@ -226,4 +227,21 @@ test('species proposed by earlier automated pull requests are recognised, singly
     { headRefName: 'submission/issue-3', body: '<!-- auto-species-ids: not-ours -->' }
   ]);
   assert.deepEqual([...ids].sort(), ['ailuropoda-melanoleuca', 'panthera-onca', 'panthera-pardus', 'prionailurus-rubiginosus']);
+});
+
+test('asked-for species are taken only from the GBIF candidates, in the model\'s order', () => {
+  const candidates = [{ key: 1, canonicalName: 'Naja naja' }, { key: 2, canonicalName: 'Naja atra' }, { key: 3, canonicalName: 'Bungarus fasciatus' }];
+  const { chosen, unknown } = chosenCandidates(['Naja atra', 'naja  NAJA', 'Naja atra', 'Naja invented', 'Panthera tigris'], candidates);
+  assert.deepEqual(chosen.map(item => item.key), [2, 1]);
+  assert.deepEqual(unknown, ['Naja invented', 'Panthera tigris']);
+});
+
+test('the request and the pick must come back in a usable shape', () => {
+  assert.equal(askShapeProblem({ group: 'Elapidae', rank: 'family', kingdom: 'Animalia', count: 20, criteria: '', problem: '' }), null);
+  assert.equal(askShapeProblem({ group: 'Elapidae', rank: 'family', count: null }), null);
+  assert.match(askShapeProblem({ group: 'Elapidae', rank: 'family', count: '20' }), /count/);
+  assert.match(askShapeProblem({ group: 'Elapidae', rank: 'family', count: 0 }), /count/);
+  assert.match(askShapeProblem([]), /JSON/);
+  assert.equal(pickShapeProblem({ species: ['Naja naja'], reason: '常见' }), null);
+  assert.match(pickShapeProblem({ species: 'Naja naja' }), /species/);
 });

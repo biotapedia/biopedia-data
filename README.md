@@ -24,7 +24,7 @@ npm test           # 验证树结构和投稿转换
 
 ## 自动新增物种
 
-`scripts/auto-species.mjs` 可以一次新增一个或多个物种，必要时连同缺失的上级分类，再由 `auto-species.yml` 提交为待审核的 PR。工作流每周一运行一次（自动挑 1 个），也可以在 **Actions → Propose a new species** 中手动运行，填写一个或多个学名（逗号或换行分隔），或填写要自动挑选的数量。
+`scripts/auto-species.mjs` 可以一次新增一个或多个物种，必要时连同缺失的上级分类，再由 `auto-species.yml` 提交为待审核的 PR。工作流每周一运行一次（自动挑 1 个），也可以在 **Actions → Propose a new species** 中手动运行，填写一个或多个学名（逗号或换行分隔），或用一句话说明要挑的物种，或填写要自动挑选的数量。
 
 脚本通过 OpenAI 兼容的 Chat Completions 接口调用大模型，不依赖任何 npm 包。在 **Settings → Secrets and variables → Actions** 中添加 Secret `LLM_API_KEY`，以及变量 `LLM_BASE_URL` 和 `LLM_MODEL`。常见平台的 `LLM_BASE_URL`：
 
@@ -55,6 +55,16 @@ npm run auto -- --name "Panthera onca, Panthera pardus"      # 逗号或换行�
 npm run auto -- --file names.txt                             # 每行一个学名，# 开头为注释
 npm run auto -- --file names.txt --count 3                   # 指定的物种，再自动挑 3 个
 ```
+
+**用一句话指定要挑的物种：**
+
+```sh
+npm run auto -- --ask "帮我生成眼镜蛇科的20个物种"
+npm run auto -- --ask "猫科中分布在中国的物种" --count 3    # --count 覆盖要求里的数量
+npm run auto -- --ask "海蛇里挑 5 个有代表性的" --plan      # 先看挑了哪些，不写文件
+```
+
+`--ask` 分三步：模型先把要求整理成一个 GBIF 分类单元（界到属之间的某一级）和其他要求；脚本从 GBIF 取出这个分类下图鉴尚未收录、也没有被自动 PR 提过的有效物种（最多 2000 个，不含标为化石的）；模型再从这份名单中按要求挑选并排序，名单以外的名字一律丢弃。和自动挑选一样，没有 IUCN 评估的物种会被跳过，由排在后面的备选补上；符合要求的不够时如实少做，并列在“未能生成”下。要求里没写数量时做 1 个。`--ask` 需要调用模型，即使加了 `--plan` 也要配置模型。PR 正文会记录原始要求、模型理解成的分类和挑选思路，审核时请确认所选物种符合要求。`--ask` 可以和 `--name` 一起用，但不再另外按顺序自动挑选。
 
 指定了学名而没有 `--count` 时只做指定的；两者都没有时自动挑 1 个；一次最多 20 个。物种按顺序逐个处理，前面写入的物种已经计入目录，所以同一个属下的几个物种只会新建一次这个属。某个物种失败（学名查不到、已存在、模型出错等）只记录原因并继续下一个，结束时汇总，有失败则退出码为 1。
 

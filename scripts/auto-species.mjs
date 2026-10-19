@@ -1,10 +1,13 @@
 // Adds species, each with any missing ancestor taxa, as reviewable changes.
 //
-//   node scripts/auto-species.mjs [--name "Panthera tigris"]... [--file names.txt] [--count N] [--plan] [--pr] [--replace]
+//   node scripts/auto-species.mjs [--name "Panthera tigris"]... [--file names.txt] [--ask "眼镜蛇科的20个物种"] [--count N]
+//                                 [--plan] [--pr] [--replace]
 //
 // --name (repeatable; commas and new lines also separate names) and --file (one name per line, `#` comments) say which
 // species to add. --count N picks N more automatically: assessed, living species from GBIF under the deepest taxa already
-// in the catalog. Without any of them one species is picked. Species are done one after another; one that fails is
+// in the catalog. Without any of them one species is picked. --ask describes the species in words instead: the model
+// names the taxon to search, GBIF lists the species under it that the catalog lacks, and the model picks from that list
+// only; --count then overrides the number in the request. Species are done one after another; one that fails is
 // reported and skipped. --plan prints what it gathered and stops before calling the model. --pr commits each species to
 // one auto/<id> branch and opens a single pull request (used by .github/workflows/auto-species.yml); otherwise files
 // are written to docs/ for review. --replace regenerates species that are already in the catalog (no sub-taxa allowed).
@@ -19,13 +22,16 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { createTaxonMarkdown, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes } from './catalog.mjs';
-import { chatJson, LLM_SETTINGS, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT, writingShapeProblem } from './auto-llm.mjs';
 import {
-  applyCorrections, clean, composeBody, copiedPassage, COPY_RUN, gbifKeyOf, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
+  ASK_PROMPT, askShapeProblem, chatJson, LLM_SETTINGS, PICK_PROMPT, pickShapeProblem, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT,
+  writingShapeProblem
+} from './auto-llm.mjs';
+import {
+  applyCorrections, chosenCandidates, clean, composeBody, copiedPassage, COPY_RUN, gbifKeyOf, imageSourceNote, LINEAGE_RANKS, linkUrl, paragraphProblems,
   planLineage, plainTextProblem, referenceText, parseSpeciesList, proposedFromPulls, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, slugify, uniqueId
 } from './auto-rules.mjs';
 import {
-  freeImage, gbifCountryCounts, gbifMatch, gbifRecord, gbifSpeciesUnder, gbifSpeciesUrl, imageCandidates, iucnStatus,
+  freeImage, gbifAllSpeciesUnder, gbifCountryCounts, gbifMatch, gbifRecord, gbifSpeciesUnder, gbifSpeciesUrl, imageCandidates, iucnStatus,
   regionTables, wikiArticles, wikidataForGbif
 } from './auto-sources.mjs';
 
@@ -38,6 +44,8 @@ if (fs.existsSync(envFile)) process.loadEnvFile(envFile);
 const MAX_CANDIDATE_LOOKUPS = 150;
 const MAX_GROUP_LOOKUPS = 10;
 const MAX_BATCH = 20;
+// Species of the asked-for taxon shown to the model; larger taxa are cut, and the model is told the list is partial.
+const MAX_ASK_CANDIDATES = 2000;
 const LENGTHS = { species: { min: 200, max: 1400 }, ancestor: { min: 20, max: 400 } };
 // Characters of each reference article the model reads: most of the species articles, only the lead of an ancestor's.
 const REFERENCE_CHARS = { species: { zh: 10000, en: 15000 }, ancestor: { zh: 1500, en: 1500 } };
@@ -67,9 +75,16 @@ function proposedIds() {
   return proposedFromPulls(JSON.parse(run('gh', ['pr', 'list', '--state', 'all', '--limit', '500', '--json', 'headRefName,body'])));
 }
 
-async function pickCandidate(taxa, proposed) {
+// Whether a GBIF species is missing from the catalog and was not proposed by an earlier automated pull request.
+function newSpeciesFilter(taxa, proposed) {
   const known = new Set([...taxa.values()].map(taxon => taxon.scientific_name.toLowerCase()));
   const knownKeys = new Set([...taxa.values()].map(gbifKeyOf).filter(Boolean));
+  return species => Boolean(species.canonicalName) && !known.has(species.canonicalName.toLowerCase())
+    && !knownKeys.has(String(species.key)) && !proposed.has(slugify(species.canonicalName));
+}
+
+async function pickCandidate(taxa, proposed) {
+  const isNew = newSpeciesFilter(taxa, proposed);
   const ancestry = id => {
     const chain = [];
     for (let taxon = taxa.get(id); taxon; taxon = taxa.get(taxon.parent_id)) chain.push(taxon);
@@ -88,9 +103,7 @@ async function pickCandidate(taxa, proposed) {
     if (!record) continue;
     let groupLookups = 0;
     for (const species of await gbifSpeciesUnder(record.key)) {
-      const name = species.canonicalName;
-      if (!name || known.has(name.toLowerCase()) || knownKeys.has(String(species.key)) || proposed.has(slugify(name))
-        || checked.has(species.key)) continue;
+      if (!isNew(species) || checked.has(species.key)) continue;
       if (++groupLookups > MAX_GROUP_LOOKUPS) break;
       if (++lookups > MAX_CANDIDATE_LOOKUPS) throw new Error('No candidate found; pass --name');
       checked.add(species.key);
@@ -101,6 +114,72 @@ async function pickCandidate(taxa, proposed) {
     }
   }
   throw new Error('No candidate found; pass --name');
+}
+
+// A model call whose JSON must have a usable shape, asked once more with the problem when it does not.
+async function chatChecked(system, user, shapeProblem, label) {
+  let feedback = '';
+  for (let attempt = 1; ; attempt++) {
+    const { output } = await chatJson(system, user + feedback, { label });
+    const problem = shapeProblem(output);
+    if (!problem) return output;
+    if (attempt === 2) throw new Error(`The model did not return usable output to ${label}: ${problem}`);
+    feedback = `\n\n上一次的输出不符合格式要求：${problem}。请按要求重新输出。`;
+    console.warn(`Output was malformed, retrying: ${problem}`);
+  }
+}
+
+// --ask: the model turns the request into a taxon, GBIF lists the species under it that the catalog lacks, and the
+// model ranks species from that list. The first `count` ranked species with an IUCN assessment are returned, as in
+// automatic picks; names the model makes up are dropped, so every species still comes from GBIF.
+async function askSpecies(request, { count, room, taxa, proposed }) {
+  const parsed = await chatChecked(ASK_PROMPT, request, askShapeProblem, 'understand the request');
+  const group = parsed.group?.trim();
+  if (!group) throw new Error(`Could not tell which taxon the request means: ${parsed.problem || 'the model named none'}`);
+  const rank = parsed.rank?.trim().toLowerCase();
+  if (!LINEAGE_RANKS.includes(rank)) throw new Error(`The model gave ${group} the rank "${parsed.rank}"; expected ${LINEAGE_RANKS.join(', ')}`);
+  const wanted = count ?? parsed.count ?? 1;
+  if (wanted < 1) throw new Error('--count must be at least 1 with --ask');
+  if (wanted > room) throw new Error(`At most ${MAX_BATCH} species per run, got ${wanted + MAX_BATCH - room}`);
+
+  // A wrong kingdom from the model should not hide an otherwise exact match.
+  const kingdom = parsed.kingdom?.trim() || undefined;
+  let match = await gbifMatch(group, { rank: rank.toUpperCase(), kingdom });
+  if (!match.record && kingdom) match = await gbifMatch(group, { rank: rank.toUpperCase() });
+  if (match.problem) throw new Error(`The request was read as ${RANK_ZH[rank]} ${group}, but ${match.problem}`);
+  const groupName = match.record.canonicalName;
+  const { species, complete } = await gbifAllSpeciesUnder(match.record.key, MAX_ASK_CANDIDATES);
+  const isNew = newSpeciesFilter(taxa, proposed);
+  const candidates = species.filter(item => !item.extinct && isNew(item));
+  console.warn(`Read as ${rank} ${groupName}${parsed.criteria ? `, ${parsed.criteria}` : ''}: GBIF lists ${species.length}${complete ? '' : '+'} `
+    + `species, ${candidates.length} not in the catalog yet.`);
+  if (!candidates.length) throw new Error(`Every species GBIF lists under ${groupName} is already in the catalog or was proposed`);
+
+  const input = {
+    request, criteria: parsed.criteria ?? '', count: wanted, max_listed: Math.min(candidates.length, wanted * 2 + 5),
+    candidates_complete: complete, candidates: [...new Set(candidates.map(item => item.canonicalName))]
+  };
+  const picked = await chatChecked(PICK_PROMPT, JSON.stringify(input, null, 1), pickShapeProblem, 'choose the species');
+  const { chosen, unknown } = chosenCandidates(picked.species, candidates);
+  if (unknown.length) console.warn(`Ignored names that are not candidates: ${unknown.join(', ')}`);
+
+  const records = [];
+  const unassessed = [];
+  for (const candidate of chosen) {
+    if (records.length === wanted) break;
+    // Fossil and unassessed species have no IUCN category, as with automatic picks.
+    const status = await iucnStatus(candidate.key);
+    if (!status || status.code === 'NE') { unassessed.push(candidate.canonicalName); continue; }
+    records.push(await gbifRecord(candidate.key));
+  }
+  if (unassessed.length) console.warn(`Skipped without an IUCN assessment: ${unassessed.join(', ')}`);
+  console.warn(`Picked ${records.length} of ${wanted}: ${records.map(record => record.canonicalName).join(', ') || 'none'}`);
+  if (picked.reason) console.warn(`Model's reasoning: ${picked.reason}`);
+  if (!records.length) throw new Error(`No assessed species under ${groupName} matched the request`);
+  return {
+    records,
+    summary: { request, group: groupName, rank, criteria: parsed.criteria ?? '', reason: picked.reason ?? '', wanted, found: records.length }
+  };
 }
 
 // Regions with observation records. Best effort: without them the species simply gets no distribution.
@@ -369,7 +448,7 @@ function speciesReport(built, output, distribution, toxicity, review) {
 
 // One pull request for a whole batch: separate pull requests would edit the same index files and could each create the
 // same new genus, so they could not all be merged.
-function pullRequestText(results, failures) {
+function pullRequestText(results, failures, asked) {
   const species = results.map(result => result.species);
   const title = species.length === 1
     ? `自动新增：${species[0].name_zh}（${species[0].scientific_name}）`
@@ -384,6 +463,12 @@ function pullRequestText(results, failures) {
     `由 \`scripts/auto-species.mjs\` 自动生成，文字模型：${listed(results.map(result => result.model))}${reviewers ? `，核查模型：${reviewers}` : ''}。`
       + '介绍文字为待审核草稿；即使启用了第二轮 AI 检查，也不能代替人工核实。',
     '',
+    ...(asked ? [
+      `按要求挑选：${quote(asked.request)} → 在 GBIF 的 *${asked.group}*（${RANK_ZH[asked.rank]}）下、图鉴尚未收录的物种中由模型挑选`
+        + `${asked.criteria ? `，其他要求：${clean(asked.criteria)}` : ''}${asked.reason ? `。挑选思路：${clean(asked.reason)}` : ''}`
+        + `。要求 ${asked.wanted} 个，挑到 ${asked.found} 个；请确认所选物种符合要求。`,
+      ''
+    ] : []),
     ...sections,
     ...failed,
     `<!-- auto-species-ids: ${species.map(item => item.id).join(',')} -->`
@@ -471,38 +556,54 @@ async function generate(record, taxa, { plan, replace }) {
 
 async function main() {
   const { values } = parseArgs({ options: {
-    name: { type: 'string', multiple: true }, file: { type: 'string' }, count: { type: 'string' },
+    name: { type: 'string', multiple: true }, file: { type: 'string' }, ask: { type: 'string' }, count: { type: 'string' },
     plan: { type: 'boolean' }, pr: { type: 'boolean' }, replace: { type: 'boolean' }
   } });
   const names = parseSpeciesList(...(values.name ?? []), process.env.SPECIES_NAME, values.file && fs.readFileSync(values.file, 'utf8'));
+  const ask = (values.ask ?? process.env.SPECIES_ASK ?? '').trim();
   const countText = (values.count ?? process.env.SPECIES_COUNT ?? '').trim();
-  const picks = countText === '' ? (names.length ? 0 : 1) : Number(countText);
-  if (!Number.isInteger(picks) || picks < 0) throw new Error(`--count must be a whole number, got "${countText}"`);
+  const count = countText === '' ? null : Number(countText);
+  if (count !== null && !(Number.isInteger(count) && count >= 0)) throw new Error(`--count must be a whole number, got "${countText}"`);
+  // With --ask the count is the number of species to pick for the request, not automatic picks on top of it.
+  const picks = ask ? 0 : count ?? (names.length ? 0 : 1);
   if (names.length + picks > MAX_BATCH) throw new Error(`At most ${MAX_BATCH} species per run, got ${names.length + picks}`);
+  if (ask && names.length >= MAX_BATCH) throw new Error(`At most ${MAX_BATCH} species per run; --name leaves no room for --ask`);
   const unset = LLM_SETTINGS.filter(key => !process.env[key]);
-  if (!values.plan && unset.length) throw new Error(`Set ${unset.join(', ')} to call the language model, or use --plan`);
+  if ((!values.plan || ask) && unset.length) {
+    throw new Error(`Set ${unset.join(', ')} to call the language model${ask ? ' (--ask needs it even with --plan)' : ', or use --plan'}`);
+  }
   if (values.pr && run('git', ['status', '--porcelain', '--', 'docs'])) {
     throw new Error('docs/ has uncommitted changes; commit or stash them before using --pr');
   }
 
-  const jobs = [...names.map(name => ({ name })), ...Array.from({ length: picks }, () => ({}))];
   const proposed = values.pr ? proposedIds() : new Set();
+  const asked = ask
+    ? await askSpecies(ask, { count, room: MAX_BATCH - names.length, taxa: loadTaxa(docsDirectory), proposed })
+    : null;
+  const jobs = [
+    ...names.map(name => ({ name })), ...(asked?.records ?? []).map(record => ({ record })), ...Array.from({ length: picks }, () => ({}))
+  ];
   const startBranchName = values.pr ? currentBranch() : null;
   const startSha = values.pr ? run('git', ['rev-parse', 'HEAD']) : null;
   const results = [];
   const plans = [];
   const failures = [];
+  if (asked && asked.found < asked.wanted) {
+    failures.push({ target: '按要求挑选', message: `要求 ${asked.wanted} 个，只挑到 ${asked.found} 个符合要求且有 IUCN 评估的物种` });
+  }
   let branch = null;
 
   try {
     for (const [index, job] of jobs.entries()) {
-      console.warn(`\n[${index + 1}/${jobs.length}] ${job.name ?? 'picking a species automatically'}`);
+      console.warn(`\n[${index + 1}/${jobs.length}] ${job.name ?? job.record?.canonicalName ?? 'picking a species automatically'}`);
       let record = null;
       let result = null;
       try {
         // Reloaded every time: species written earlier in this run are part of the catalog.
         const taxa = loadTaxa(docsDirectory);
-        if (job.name) {
+        if (job.record) {
+          record = job.record;
+        } else if (job.name) {
           const match = await gbifMatch(job.name);
           if (match.problem) throw new Error(match.problem);
           record = match.record;
@@ -536,7 +637,7 @@ async function main() {
     if (values.plan) {
       console.log(JSON.stringify(plans.length === 1 ? plans[0] : plans, null, 2));
     } else if (values.pr && results.length) {
-      console.log(openPullRequest(branch, pullRequestText(results, failures)));
+      console.log(openPullRequest(branch, pullRequestText(results, failures, asked?.summary)));
     } else {
       for (const result of results) {
         console.log(`Wrote ${result.files.join(', ')} and updated the indexes.\n`);

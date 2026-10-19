@@ -1,6 +1,6 @@
 name: Propose a new species
 
-# Weekly, or on demand with scientific names and/or a count. A run opens one pull request for all the species it
+# Weekly, or on demand with scientific names, a request in words and/or a count. A run opens one pull request for all the species it
 # added; nothing reaches main without review.
 on:
   schedule:
@@ -11,8 +11,12 @@ on:
         description: 学名，例如 Panthera tigris；可填多个，用逗号或换行分隔（留空则自动挑选）
         required: false
         default: ''
+      ask:
+        description: 用一句话说明要挑的物种，例如“眼镜蛇科的20个物种”“猫科中分布在中国的”；模型从 GBIF 中图鉴尚未收录的物种里挑选
+        required: false
+        default: ''
       count:
-        description: 另外自动挑选几个物种（留空：没填学名时为 1，填了学名时为 0）
+        description: 另外自动挑选几个物种（留空：没填学名时为 1，填了学名时为 0）；填了要求时表示按要求挑几个，覆盖要求里的数量
         required: false
         default: ''
 
@@ -39,6 +43,7 @@ jobs:
         env:
           # Passed through the environment rather than the command line, so the input is never parsed by the shell.
           SPECIES_NAME: ${{ inputs.name }}
+          SPECIES_ASK: ${{ inputs.ask }}
           SPECIES_COUNT: ${{ inputs.count }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}

@@ -108,6 +108,55 @@ export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。�
 {"corrections":[{"scientific_name":"…","original":"…","replacement":"…","reason":"…"}],"doubts":["…"]}
 没有需要改正的地方时 corrections 为空数组。能改好的一律直接改，不要放进 doubts；doubts 只列出改完之后仍然留在正文里、你无法从 references 确认、又不宜删去的说法，每条一句话，通常应为空数组。`;
 
+// --ask, step one: the request in words becomes a taxon to search GBIF under. The model only names the group; the
+// species themselves come from GBIF.
+export const ASK_PROMPT = `你是「万物图鉴」的分类学助手。用户会用一句话说明想新增哪些物种，请把要求整理成检索条件。
+
+- group：包含所要物种的最小分类单元的拉丁学名（GBIF Backbone 中的有效名），级别只能是 kingdom、phylum、class、order、family、genus 之一。例如“眼镜蛇科”是 Elapidae（family）；“蛇”没有对应这些级别的类群，就取 Squamata（order），并在 criteria 中写“只要蛇类”。
+- rank：group 的级别，用上面的小写英文。
+- kingdom：group 所属的界的拉丁名（Animalia、Plantae、Fungi 等），用于区分不同界的同名类群；group 本身是界时填它自己。
+- count：用户要的物种数量（整数）；没有说明就填 null。
+- criteria：group 以外的其他挑选要求（例如“常见的”“分布在中国的”“海蛇”），用简体中文简述；没有就填空字符串。
+- problem：无法判断用户想要哪个类群时，group 填空字符串，并在这里用一句话说明原因；否则填空字符串。
+
+只输出一个 JSON 对象，不要输出其他任何内容：
+{"group":"Elapidae","rank":"family","kingdom":"Animalia","count":20,"criteria":"","problem":""}`;
+
+// --ask, step two: the model ranks species from GBIF's list. Names outside the list are dropped by the script.
+export const PICK_PROMPT = `你是「万物图鉴」的编辑，要从候选名单中挑选准备新增的物种。
+
+输入：
+- request：用户的原始要求；criteria：整理出的其他挑选要求（可能为空）。
+- count：需要的物种数量；max_listed：最多列出的数量。
+- candidates：GBIF 中该类群下、图鉴尚未收录的有效物种学名。candidates_complete 为 false 时名单只是其中一部分。
+
+要求：
+1. 只能从 candidates 中挑选，学名原样复制，不要改动拼写，不要加入名单之外的物种。
+2. 首先满足 request 和 criteria；在此基础上，优先挑选知名、有代表性、资料较多（例如有维基百科条目）的现生物种，避开化石种和极少被研究的物种。
+3. 按优先顺序列出，最多 max_listed 个：前 count 个是首选，其余作为备选。脚本会跳过没有 IUCN 评估的物种并依次补位。符合要求的物种不够时如实少列，不要凑数。
+4. reason 用一句话说明挑选思路。
+
+只输出一个 JSON 对象，不要输出其他任何内容：
+{"species":["Naja naja","…"],"reason":"…"}`;
+
+export function askShapeProblem(output) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return '输出必须是一个 JSON 对象';
+  for (const key of ['group', 'rank', 'kingdom', 'criteria', 'problem']) {
+    if (typeof (output[key] ?? '') !== 'string') return `${key} 必须是字符串`;
+  }
+  if (output.count !== null && output.count !== undefined && !(Number.isInteger(output.count) && output.count > 0)) {
+    return 'count 必须是正整数或 null';
+  }
+  return null;
+}
+
+export function pickShapeProblem(output) {
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return '输出必须是一个 JSON 对象';
+  if (!Array.isArray(output.species) || !output.species.every(item => typeof item === 'string')) return 'species 必须是字符串数组';
+  if (typeof (output.reason ?? '') !== 'string') return 'reason 必须是字符串';
+  return null;
+}
+
 // The shape the script relies on; content rules are checked in auto-rules.mjs.
 export function writingShapeProblem(output) {
   const isText = value => typeof value === 'string';
