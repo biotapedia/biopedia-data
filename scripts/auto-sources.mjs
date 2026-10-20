@@ -1,6 +1,6 @@
 // Open data sources for scripts/auto-species.mjs. Facts come from here, never from the language model:
 // GBIF Backbone Taxonomy (CC BY 4.0) for names and classification, IUCN categories and observation records as
-// served by GBIF, Wikidata (CC0) for Chinese names, Wikipedia and indexed scholarly abstracts for fact checking,
+// served by GBIF, Wikidata (CC0) for Chinese names, Wikipedia and scholarly abstracts/full-text excerpts for fact checking,
 // and Wikimedia Commons for freely licensed images.
 import fs from 'node:fs';
 import os from 'node:os';
@@ -34,6 +34,15 @@ async function getJson(url, { retries = 2 } = {}) {
       await new Promise(resolve => setTimeout(resolve, 1000 * 2 ** attempt));
     }
   }
+}
+
+async function getText(url) {
+  const response = await fetch(url, { headers: { 'user-agent': USER_AGENT }, signal: AbortSignal.timeout(20000) });
+  if (response.status === 404) return null;
+  if (!response.ok) throw new Error(`${new URL(url).host}: HTTP ${response.status}`);
+  if (Number(response.headers.get('content-length')) > 3_000_000) return null;
+  const text = await response.text();
+  return text.length <= 3_000_000 ? text : null;
 }
 
 const query = params => new URLSearchParams(params).toString();
@@ -176,7 +185,7 @@ export function abstractFromIndex(index) {
 
 // An indexed paper is usable only when its title or abstract identifies the exact species binomial.
 export function scholarlyAbstracts(results, scientificName) {
-  const exact = new RegExp(`(^|[^A-Za-z])${scientificName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z]|$)`, 'i');
+  const exact = speciesPattern(scientificName);
   return (results ?? []).flatMap(work => {
     const text = abstractFromIndex(work.abstract_inverted_index);
     const url = work.doi || work.id;
@@ -192,6 +201,55 @@ export async function scholarlyArticles(scientificName) {
   return scholarlyAbstracts(result?.results, scientificName);
 }
 
+const speciesPattern = scientificName => new RegExp(`(^|[^A-Za-z])${scientificName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z]|$)`, 'i');
+const xmlText = value => String(value ?? '').replace(/<[^>]*>/g, ' ')
+  .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+  .replace(/&#x([\da-f]+);/gi, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+  .replace(/&(?:amp|lt|gt|quot|apos|nbsp);/g, entity => ({ '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'", '&nbsp;': ' ' })[entity])
+  .replace(/\s+/g, ' ').trim();
+
+// Read only paragraphs that name the exact species, not an entire paper about several taxa.
+export function speciesPassagesFromJats(xml, scientificName) {
+  const body = xml?.match(/<body(?:\s[^>]*)?>([\s\S]*?)<\/body>/i)?.[1] ?? '';
+  const exact = speciesPattern(scientificName);
+  return [...body.matchAll(/<p(?:\s[^>]*)?>([\s\S]*?)<\/p>/gi)]
+    .map(match => xmlText(match[1]))
+    .filter(paragraph => exact.test(paragraph) && paragraph.length >= 80)
+    .slice(0, 3).map(paragraph => paragraph.slice(0, 1200)).join('\n\n');
+}
+
+// Europe PMC can surface species named inside open-access full text even when no abstract names it.
+export async function europePmcArticles(scientificName) {
+  const base = 'https://www.ebi.ac.uk/europepmc/webservices/rest';
+  const result = await getJson(`${base}/search?${query({ query: `"${scientificName}"`, format: 'json', resultType: 'core', pageSize: '10' })}`);
+  const exact = speciesPattern(scientificName);
+  const articles = [];
+  let fullTextRequests = 0;
+  for (const work of result?.resultList?.result ?? []) {
+    const title = xmlText(work.title);
+    const abstract = xmlText(work.abstractText);
+    const articleUrl = work.doi ? `https://doi.org/${work.doi.replace(/^https?:\/\/doi\.org\//i, '')}`
+      : work.pmcid ? `https://europepmc.org/articles/${work.pmcid}` : null;
+    if (!title || !isHttpsUrl(articleUrl)) continue;
+    if (abstract.length >= 120 && exact.test(`${title} ${abstract}`)) {
+      articles.push({ kind: 'scholarly', lang: 'en', title, url: articleUrl, text: abstract });
+    }
+    if (work.pmcid && fullTextRequests < 3) {
+      fullTextRequests++;
+      try {
+        const xml = await getText(`${base}/${encodeURIComponent(work.pmcid)}/fullTextXML`);
+        const text = speciesPassagesFromJats(xml, scientificName);
+        if (text.length >= 120) articles.push({ kind: 'scholarly-fulltext', lang: 'en', title,
+          url: `https://europepmc.org/articles/${work.pmcid}`, text });
+      } catch (error) {
+        console.warn(`Europe PMC full text unavailable for ${work.pmcid}: ${error.message}`);
+      }
+    }
+    if (articles.length >= 4) break;
+  }
+  return articles.slice(0, 4);
+}
+
 // GBIF descriptions are attached to the exact taxon key; the source itself may be a cited checklist.
 export async function gbifDescriptions(key) {
   const result = await getJson(`${GBIF}/species/${key}/descriptions?limit=20`);
@@ -203,26 +261,33 @@ export async function gbifDescriptions(key) {
   }).slice(0, 3);
 }
 
-// Prefer a species' own encyclopedia page; try indexed research and GBIF descriptions when none exists.
-export async function speciesReferenceArticles(key, scientificName, wikidata) {
-  const exact = new RegExp(`(^|[^A-Za-z])${scientificName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}([^A-Za-z]|$)`, 'i');
+// Fast mode finds one usable source before writing. Enriched mode gathers independent sources for fact checking.
+export async function speciesReferenceArticles(key, scientificName, wikidata, { enrich = false } = {}) {
+  const exact = speciesPattern(scientificName);
   const providers = [
     ['Wikipedia', async () => (await wikiArticles(wikidata?.articles)).filter(article => exact.test(`${article.title} ${article.text.slice(0, 600)}`))],
     ['Wikipedia title search', async () => (await wikiArticles({ en: scientificName })).filter(article => exact.test(`${article.title} ${article.text.slice(0, 600)}`))],
     ['OpenAlex', () => scholarlyArticles(scientificName)],
+    ['Europe PMC', () => europePmcArticles(scientificName)],
     ['GBIF descriptions', () => gbifDescriptions(key)]
   ];
   const errors = [];
+  const articles = [];
+  const seen = new Set();
   for (const [name, lookup] of providers) {
     try {
-      const articles = await lookup();
-      if (articles.length) return articles;
+      for (const article of await lookup()) {
+        const identity = `${article.kind}:${article.url}`;
+        if (!seen.has(identity)) { seen.add(identity); articles.push(article); }
+      }
+      if (articles.length && !enrich) return articles;
     } catch (error) {
       errors.push(`${name}: ${error.message}`);
     }
   }
-  if (errors.length) throw new Error(`Reference lookup incomplete for ${scientificName}: ${errors.join('; ')}`);
-  return [];
+  if (errors.length && !articles.length) throw new Error(`Reference lookup incomplete for ${scientificName}: ${errors.join('; ')}`);
+  if (errors.length) console.warn(`Some references unavailable for ${scientificName}: ${errors.join('; ')}`);
+  return articles.slice(0, 12);
 }
 
 // The picture the Wikipedia editors chose to head the article.

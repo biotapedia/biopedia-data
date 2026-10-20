@@ -192,6 +192,7 @@ export function sourceBackedToxicity(value, references) {
   if (!value || !TOXICITY_LEVELS.has(value.level) || typeof value.evidence !== 'string') return null;
   const evidence = value.evidence.trim();
   if (evidence.length < 8 || evidence.length > 200) return null;
+  if (value.level === 'high' && !/(?:deadly|lethal|fatal|death|剧毒|致命|致死|死亡)/i.test(evidence)) return null;
   const source = references.find(reference => reference.text.includes(evidence));
   return source ? { level: value.level, evidence, source: source.source } : null;
 }

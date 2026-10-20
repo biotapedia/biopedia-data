@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createTaxonMarkdown, parseTaxon } from '../scripts/catalog.mjs';
+import { createTaxonMarkdown, highToxicityClaim, parseTaxon } from '../scripts/catalog.mjs';
 import {
   applyCorrections, chosenCandidates, collapseRegions, composeBody, copiedPassage, descriptionProblem, imageAttribution, imageCredit, imageLicenseProblem, imageSourceNote,
   paragraphProblems, parseSpeciesList, planLineage, proposedFromPulls, referenceText, regionCandidates, renderParagraphs, selectDistribution, sourceBackedToxicity, stableSpeciesSample, slugify, uniqueId
 } from '../scripts/auto-rules.mjs';
 import { REGION_PARENTS } from '../scripts/catalog.mjs';
 import { askShapeProblem, pickShapeProblem, reviewShapeProblem, WRITE_PROMPT } from '../scripts/auto-llm.mjs';
-import { abstractFromIndex, scholarlyAbstracts, speciesReferenceArticles } from '../scripts/auto-sources.mjs';
+import { abstractFromIndex, scholarlyAbstracts, speciesPassagesFromJats, speciesReferenceArticles } from '../scripts/auto-sources.mjs';
 
 const tiger = {
   key: 5219416, canonicalName: 'Panthera tigris',
@@ -185,6 +185,41 @@ test('a species description from GBIF can verify a draft when articles are absen
   }
 });
 
+test('open-access paper excerpts contain only paragraphs naming the exact species', () => {
+  const xml = '<article><body><sec><p>Amanita castanea is recorded from this region, with detailed morphology and sequence data supporting its identification in the sampled collections.</p><p>Amanita muscaria has unrelated toxicology and must not be used as evidence for the target species.</p></sec></body></article>';
+  const excerpt = speciesPassagesFromJats(xml, 'Amanita castanea');
+  assert.match(excerpt, /Amanita castanea/);
+  assert.doesNotMatch(excerpt, /Amanita muscaria/);
+  assert.equal(speciesPassagesFromJats(xml, 'Amanita castaneae'), '');
+});
+
+test('enriched references add research even when Wikipedia already covers the species', async () => {
+  const originalFetch = globalThis.fetch;
+  const abstract = 'Amanita castanea is described using morphology and molecular phylogeny. The examined collections document its diagnostic characters and allow comparison with related taxa from the same region.';
+  const index = {};
+  abstract.split(' ').forEach((word, position) => { (index[word] ??= []).push(position); });
+  const calls = [];
+  globalThis.fetch = async url => {
+    const address = String(url);
+    calls.push(address);
+    const json = value => ({ ok: true, status: 200, json: async () => value });
+    if (address.includes('wikipedia.org')) return json({ query: { pages: [{ title: 'Amanita castanea', fullurl: 'https://en.wikipedia.org/wiki/Amanita_castanea', extract: 'Amanita castanea is a mushroom in the family Amanitaceae.' }] } });
+    if (address.includes('openalex.org')) return json({ results: [{ id: 'https://openalex.org/W1', title: 'Amanita castanea study', doi: 'https://doi.org/10.1234/paper', abstract_inverted_index: index }] });
+    if (address.endsWith('/fullTextXML')) return { ok: true, status: 200, headers: new Headers(), text: async () => '<article><body><p>Amanita castanea was examined in the study, where collected specimens provided detailed morphological and molecular evidence for the taxon.</p></body></article>' };
+    if (address.includes('europepmc') && address.includes('/search?')) return json({ resultList: { result: [{ title: 'Amanita castanea study', pmcid: 'PMC123', doi: '10.1234/paper', abstractText: '' }] } });
+    if (address.includes('/descriptions')) return json({ results: [{ source: 'Species checklist', description: 'Amanita castanea is documented with diagnostic characters in this taxonomic checklist. The description refers to this accepted species name and its recorded material.' }] });
+    throw new Error(`Unexpected source request ${address}`);
+  };
+  try {
+    const articles = await speciesReferenceArticles(123, 'Amanita castanea', { articles: { en: 'Amanita castanea' } }, { enrich: true });
+    assert.deepEqual(new Set(articles.map(article => article.kind)), new Set(['wikipedia', 'scholarly', 'scholarly-fulltext', 'gbif-description']));
+    assert.ok(calls.some(url => url.includes('openalex.org')));
+    assert.ok(calls.some(url => url.includes('/fullTextXML')));
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
 const limits = { kind: 'species', min: 10, max: 200 };
 const paragraph = (heading, text) => ({ heading, text });
 
@@ -261,11 +296,18 @@ test('distribution basis is stored only with a map and accepts known meanings', 
 });
 
 test('AI toxicity needs a passage found verbatim in a species reference', () => {
-  const references = [{ source: '百科条目', text: '这种蘑菇含有强烈毒素，误食后可能导致严重中毒。' }];
-  assert.deepEqual(sourceBackedToxicity({ level: 'high', evidence: '误食后可能导致严重中毒' }, references),
-    { level: 'high', evidence: '误食后可能导致严重中毒', source: '百科条目' });
+  const references = [{ source: '百科条目', text: '这种蘑菇含有强烈毒素，误食后可能致命。' }];
+  assert.deepEqual(sourceBackedToxicity({ level: 'high', evidence: '含有强烈毒素，误食后可能致命' }, references),
+    { level: 'high', evidence: '含有强烈毒素，误食后可能致命', source: '百科条目' });
   assert.equal(sourceBackedToxicity({ level: 'high', evidence: '接触后可能导致严重中毒' }, references), null);
+  assert.equal(sourceBackedToxicity({ level: 'high', evidence: '这种蘑菇含有强烈毒素' }, references), null);
   assert.equal(sourceBackedToxicity({ level: 'none', evidence: '没有毒性' }, references), null);
+});
+
+test('an explicit lethal claim about the species needs a matching toxicity label', () => {
+  assert.match(highToxicityClaim([{ text: '赭鹅膏剧毒，误食可能致命。' }], ['赭鹅膏', 'Amanita ocreata']), /剧毒/);
+  assert.match(highToxicityClaim([{ text: '该菌具有致命毒性。' }], ['赭鹅膏']), /致命毒性/);
+  assert.equal(highToxicityClaim([{ text: '橙盖鹅膏菌与剧毒的近似种容易混淆。' }], ['橙盖鹅膏菌']), null);
 });
 
 test('unknown Chinese names are represented as missing rather than invented', () => {

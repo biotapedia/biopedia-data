@@ -15,6 +15,22 @@ export const CONSERVATION_STATUSES = new Set(['EX', 'EW', 'CR', 'EN', 'VU', 'NT'
 export const CONSERVATION_RANKS = new Set(['species', 'subspecies']);
 // A descriptive editorial label, not a standardized hazard assessment. Omit when evidence is absent.
 export const TOXICITY_LEVELS = new Set(['none', 'mild', 'toxic', 'high']);
+// Detect direct lethal-risk claims about this taxon, excluding remarks about poisonous lookalikes.
+export function highToxicityClaim(paragraphs, names) {
+  const subjects = [...names.filter(Boolean), '该物种', '本种', '该菌', '这种真菌'];
+  const danger = /^(?:是|为|具有|有|属于|含有|所含)?[\s，、的]{0,3}(?:剧毒|致命毒性|可致命|能致死)/;
+  for (const paragraph of paragraphs) {
+    for (const sentence of String(paragraph.text ?? '').split(/[。！？\n]/)) {
+      const trimmed = sentence.trim();
+      for (const subject of subjects) {
+        const position = trimmed.indexOf(subject);
+        if (position < 0 || (['该物种', '本种', '该菌', '这种真菌'].includes(subject) && position !== 0)) continue;
+        if (danger.test(trimmed.slice(position + subject.length))) return trimmed;
+      }
+    }
+  }
+  return null;
+}
 // Region id → parent id. Mirrors src/regions.js in the frontend; the map geometry uses the same ids.
 export const REGION_PARENTS = JSON.parse(fs.readFileSync(new URL('./regions.json', import.meta.url), 'utf8'));
 
@@ -88,6 +104,9 @@ export function parseTaxon(markdown, filename = 'unknown.md') {
   }
   const body = match[2].trim();
   if (body.length < 10) throw new Error(`${filename}: description is too short`);
+  if (CONSERVATION_RANKS.has(rank) && metadata.toxicity !== 'high' && highToxicityClaim([{ text: body.split(/\n## 资料来源\n/)[0] }], [nameZh, scientificName])) {
+    throw new Error(`${filename}: description directly claims lethal toxicity but toxicity is not high`);
+  }
   if (markdownImageUrls(body).some(url => !isHttpsUrl(url))) {
     throw new Error(`${filename}: Markdown image must be an HTTPS URL`);
   }

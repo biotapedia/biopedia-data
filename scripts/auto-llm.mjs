@@ -85,7 +85,7 @@ export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。�
 
 输入：
 - facts：权威数据（学名、分类位置、中文名、保护等级），一律以此为准。
-- references：每个条目的参考资料节选，可能来自维基百科、学术论文摘要或 GBIF 物种描述。学术摘要只覆盖论文讨论的范围，不能据此推断未提及的特征。
+- references：每个条目的参考资料节选，可能来自维基百科、学术论文摘要、开放获取论文中明确提及该物种的段落，或 GBIF 物种描述。只依据节选确实支持的事实；论文同时讨论其他物种时，不得把它们的特征移给目标物种。
 - distribution_candidates：GBIF 有记录地区，只能在参考文章明确支持原生分布时选用。
 - drafts：待核对的介绍。
 - writer_doubts：作者自己也没有把握的说法，每一条都要核对并处理。
@@ -102,6 +102,7 @@ export const REVIEW_PROMPT = `你是「万物图鉴」的事实核查编辑。�
 另外依据 references 独立给出：
 - distribution：只选有参考文章明确支持的原生分布区域；无依据时 confidence 为 low、regions 为空。地区 id 必须来自 distribution_candidates。
 - toxicity：只在物种自身的参考文章明确支持时填等级和逐字复制的 8–200 字 evidence；否则为 null。等级为 none、mild、toxic、high。不要把食用毒性写成接触毒性。
+- 如果正文明确称该物种“剧毒”或“可致命”，必须同时给出支持 high 的物种原文证据；找不到证据就用 corrections 删除或改正该断言，不能保留断言却把 toxicity 留空。
 
 改法：每处修改给出
 - scientific_name：所属条目的学名；

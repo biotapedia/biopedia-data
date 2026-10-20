@@ -10,6 +10,7 @@ source_url: "https://www.gbif.org/species/5452199"
 distribution: ["tdwg-73","tdwg-76","tdwg-79"]
 distribution_basis: "native"
 conservation_status: "LC"
+toxicity: "high"
 ---
 
 ## 形态特征
@@ -22,7 +23,7 @@ conservation_status: "LC"
 
 ## 中毒风险与毒性
 
-赭鹅膏剧毒，曾引起西北美地区多起中毒，尤其是春季。其主要含鹅膏毒素，也含鬼笔毒素，其中α-鹅膏菌素及β-鹅膏菌素被认为是主要致毒成分。毒素抑制RNA聚合酶II，阻断信使RNA合成，导致细胞代谢停止并死亡，肝脏是主要受害器官，肾脏亦易受损。中毒初期表现为腹痛、腹泻、呕吐等消化道症状，2–3天后可能暂时缓解，随后出现黄疸、谵妄、癫痫、昏迷等肝衰竭表现，死亡通常发生在中毒后6–16日。参考资料指出，食用菌盖一半就可能致命，食用者中有40%死亡，狗误食也会致死。目前无特效解毒剂，但青霉素G、水飞蓟素等治疗可能改善预后，肝移植在肝衰竭患者中是挽救生命的选择。
+赭鹅膏剧毒，含有鹅膏毒素，误食可导致严重中毒。美国疾病控制与预防中心记录了经真菌学家辨认为赭鹅膏的中毒病例：食用后可能延迟数小时才出现腹痛、恶心、呕吐和腹泻，随后可能发生肝损伤，严重时可危及生命。烹调不能使鹅膏毒素失活；怀疑误食时应立即寻求医疗帮助。
 
 ## 保护状况
 
@@ -34,6 +35,8 @@ conservation_status: "LC"
 - 中文名：[Wikidata Q588770](https://www.wikidata.org/wiki/Q588770)（CC0）
 - 参考资料：[中文维基百科「赭鵝膏」](https://zh.wikipedia.org/wiki/%E8%B5%AD%E9%B5%9D%E8%86%8F)（CC BY-SA 4.0；仅作参考，文字为重新撰写）
 - 参考资料：[英文维基百科「Amanita ocreata」](https://en.wikipedia.org/wiki/Amanita_ocreata)（CC BY-SA 4.0；仅作参考，文字为重新撰写）
+- 毒性依据：[Mycologia：赭鹅膏中的鹅膏毒素研究](https://doi.org/10.1080/00275514.1977.12020168)
+- 中毒病例与风险：[美国 CDC《Amanita Species Mushroom Poisonings》](https://www.cdc.gov/mmwr/volumes/75/wr/mm7520a2.htm)
 - 保护等级：[IUCN 红色名录](https://www.iucnredlist.org/species/198477478)（经 GBIF 获取）
 - 地图候选记录：[GBIF 观察记录](https://www.gbif.org/species/5452199)（原生范围参照上列参考资料；区域划分采用 TDWG WGSRPD）
 - 封面图片：[Wikimedia Commons](https://commons.wikimedia.org/wiki/File:Amanita_ocreata_79782.jpg)（作者 This image was created by user Ryane Snow snowman at Mushroom Observer , a sourc，[CC BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0)）

@@ -178,3 +178,17 @@ test('toxicity is optional, species-level, and preserved in submissions and inde
   }));
   assert.equal(expectedIndexes(new Map([[taxon.id, taxon]])).get('roots.json').includes('"toxicity": "mild"'), true);
 });
+
+test('catalog rejects a lethal species description without the high toxicity label', () => {
+  const entry = {
+    id: 'amanita-ocreata', parent_id: 'amanita', rank: 'species',
+    scientific_name: 'Amanita ocreata', name_zh: '赭鹅膏',
+    description: '赭鹅膏剧毒，误食可能危及生命。\n\n## 资料来源\n\n- [参考](https://example.org/reference)'
+  };
+  assert.throws(() => parseTaxon(createTaxonMarkdown(entry)), /toxicity is not high/);
+  assert.equal(parseTaxon(createTaxonMarkdown({ ...entry, toxicity: 'high' })).toxicity, 'high');
+  assert.doesNotThrow(() => parseTaxon(createTaxonMarkdown({
+    ...entry, name_zh: '橙盖鹅膏菌',
+    description: '橙盖鹅膏菌与剧毒的近似种容易混淆。'
+  })));
+});

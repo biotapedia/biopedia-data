@@ -20,7 +20,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { createTaxonMarkdown, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes } from './catalog.mjs';
+import { createTaxonMarkdown, highToxicityClaim, loadTaxa, parseTaxon, REGION_PARENTS, syncIndexes } from './catalog.mjs';
 import {
   ASK_PROMPT, askShapeProblem, chatJson, LLM_SETTINGS, PICK_PROMPT, pickShapeProblem, REVIEW_PROMPT, reviewShapeProblem, WRITE_PROMPT,
   writingShapeProblem
@@ -47,8 +47,9 @@ const MAX_BATCH = 20;
 const MAX_ASK_CANDIDATES = 2000;
 const MAX_SOURCE_PROBES = 100;
 const LENGTHS = { species: { min: 120, max: 1400 }, ancestor: { min: 20, max: 400 } };
-// Characters of each reference article the source checker reads: most species articles, only the lead of an ancestor's.
-const REFERENCE_CHARS = { species: { zh: 10000, en: 15000 }, ancestor: { zh: 1500, en: 1500 } };
+// Keep the fact-check input bounded even when several scholarly sources are found.
+const REFERENCE_CHARS = { species: { zh: 4000, en: 6000 }, ancestor: { zh: 1500, en: 1500 } };
+const SPECIES_REFERENCE_BUDGET = 30000;
 const MAX_DISTRIBUTION_CANDIDATES = 30;
 const STATUS_ZH = { EX: '灭绝', EW: '野外灭绝', CR: '极危', EN: '濒危', VU: '易危', NT: '近危', LC: '无危', DD: '数据缺乏', NE: '未评估' };
 const TOXICITY_ZH = { none: '无毒', mild: '微毒', toxic: '有毒', high: '剧毒' };
@@ -57,24 +58,35 @@ const countryNames = new Intl.DisplayNames(['zh-Hans'], { type: 'region' });
 
 const kindOf = entry => (entry.rank === 'species' ? 'species' : 'ancestor');
 const articleName = article => article.kind === 'scholarly' ? `学术论文摘要「${article.title}」`
+  : article.kind === 'scholarly-fulltext' ? `开放获取论文物种段落「${article.title}」`
   : article.kind === 'gbif-description' ? `GBIF 物种描述「${article.title}」`
     : `${article.lang === 'zh' ? '中文' : '英文'}维基百科「${article.title}」`;
 // What the source checker reads of each entry's reference material.
-const references = entry => entry.articles.map(article => ({
-  source: articleName(article), text: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang] ?? 15000)
-}));
+const references = entry => {
+  let remaining = kindOf(entry) === 'species' ? SPECIES_REFERENCE_BUDGET : 3000;
+  return entry.articles.map(article => {
+    const perSource = article.kind === 'scholarly' ? 2000 : article.kind === 'scholarly-fulltext' ? 2000
+      : article.kind === 'gbif-description' ? 2000 : REFERENCE_CHARS[kindOf(entry)][article.lang] ?? 1500;
+    const text = referenceText(article.text, Math.min(perSource, remaining));
+    remaining -= text.length;
+    return { source: articleName(article), text };
+  }).filter(reference => reference.text);
+};
 // The first run of text copied verbatim from any of the entry's articles, or null.
 const copiedFrom = (entry, text) => entry.articles.map(article => copiedPassage(text, article.text)).find(Boolean) ?? null;
 
 const speciesSourceCache = new Map();
-async function speciesSources(key, scientificName) {
-  if (!speciesSourceCache.has(key)) speciesSourceCache.set(key, (async () => {
-    let wikidata = null;
-    try { wikidata = await wikidataForGbif(key); }
-    catch (error) { console.warn(`Wikidata unavailable for ${scientificName}: ${error.message}`); }
-    return { wikidata, articles: await speciesReferenceArticles(key, scientificName, wikidata) };
-  })());
-  return speciesSourceCache.get(key);
+async function speciesSources(key, scientificName, { enrich = false } = {}) {
+  if (!speciesSourceCache.has(key)) speciesSourceCache.set(key, { wikidata: (async () => {
+    try { return await wikidataForGbif(key); }
+    catch (error) { console.warn(`Wikidata unavailable for ${scientificName}: ${error.message}`); return null; }
+  })() });
+  const cached = speciesSourceCache.get(key);
+  const mode = enrich ? 'enriched' : 'basic';
+  if (!cached[mode]) cached[mode] = cached.wikidata.then(async wikidata => ({
+    wikidata, articles: await speciesReferenceArticles(key, scientificName, wikidata, { enrich })
+  }));
+  return cached[mode];
 }
 
 function run(program, args) {
@@ -218,7 +230,7 @@ async function gather(taxa, record, { plan = false } = {}) {
     });
   for (const entry of [entries.at(-1), ...entries.slice(0, -1)]) {
     if (entry.rank === 'species') {
-      ({ wikidata: entry.wikidata, articles: entry.articles } = await speciesSources(entry.gbif_key, entry.scientific_name));
+      ({ wikidata: entry.wikidata, articles: entry.articles } = await speciesSources(entry.gbif_key, entry.scientific_name, { enrich: true }));
       if (!entry.articles.length) throw new Error(`No supported species reference retrieved for ${entry.scientific_name}; skipped before calling the writing model`);
     } else {
       entry.wikidata = await wikidataForGbif(entry.gbif_key);
@@ -343,6 +355,7 @@ function applyReview(entries, draft, { output, model }) {
 // including the claims the writer itself was unsure of.
 async function reviewProse(gathered, draft) {
   const { entries } = gathered;
+  const species = entries.at(-1);
   const input = {
     facts: speciesFacts(gathered),
     references: entries.map(entry => ({ scientific_name: entry.scientific_name, references: references(entry) })),
@@ -361,11 +374,17 @@ async function reviewProse(gathered, draft) {
     const result = await chatJson(REVIEW_PROMPT, request + feedback, {
       label: 'fact-check the descriptions', model: process.env.LLM_REVIEW_MODEL || undefined
     });
-    const problem = reviewShapeProblem(result.output);
-    if (!problem) return applyReview(entries, draft, result);
-    if (attempt === 2) throw new Error(`The fact check did not return usable output: ${problem}`);
-    feedback = `\n\n上一次的输出不符合格式要求：${problem}。请按要求重新输出。`;
-    console.warn(`Fact check output was malformed, retrying: ${problem}`);
+    let problem = reviewShapeProblem(result.output);
+    if (!problem) {
+      const checked = applyReview(entries, draft, result);
+      const claim = highToxicityClaim(checked.output.species.paragraphs, [chineseName(species), species.scientific_name]);
+      const badge = sourceBackedToxicity(checked.output.species.toxicity, references(species));
+      if (!claim || badge?.level === 'high') return checked;
+      problem = `${species.scientific_name} 正文明确称该物种剧毒或可致命（「${claim.slice(0, 100)}」），但 high 毒性标签缺少该物种参考资料的逐字依据。请给出有原文依据的 high/evidence，或用 corrections 删除无依据的毒性断言`;
+    }
+    if (attempt === 2) throw new Error(`The fact check did not reconcile the draft: ${problem}`);
+    feedback = `\n\n上一次的核查没有通过：${problem}。请按要求重新输出。`;
+    console.warn(`Fact check failed checks, retrying: ${problem}`);
   }
 }
 
@@ -556,13 +575,16 @@ async function generate(record, taxa, { plan, replace }) {
   if (plan) {
     return { plan: {
       parent_id: gathered.parentId,
-      entries: gathered.entries.map(entry => ({
-        id: entry.id, rank: entry.rank, scientific_name: entry.scientific_name, gbif: gbifSpeciesUrl(entry.gbif_key),
-        name_zh: chineseName(entry) || null, name_source: entry.nameRecord?.url ?? entry.wikidata?.url ?? null, wikidata: entry.wikidata?.url ?? null,
-        articles: entry.articles.map(article => ({ kind: article.kind, url: article.url, characters: article.text.length,
-          read_for_check: referenceText(article.text, REFERENCE_CHARS[kindOf(entry)][article.lang] ?? 15000).length })),
-        authorship: entry.authorship ?? null
-      })),
+      entries: gathered.entries.map(entry => {
+        const checkedReferences = new Map(references(entry).map(reference => [reference.source, reference.text.length]));
+        return {
+          id: entry.id, rank: entry.rank, scientific_name: entry.scientific_name, gbif: gbifSpeciesUrl(entry.gbif_key),
+          name_zh: chineseName(entry) || null, name_source: entry.nameRecord?.url ?? entry.wikidata?.url ?? null, wikidata: entry.wikidata?.url ?? null,
+          articles: entry.articles.map(article => ({ kind: article.kind, url: article.url, characters: article.text.length,
+            read_for_check: checkedReferences.get(articleName(article)) ?? 0 })),
+          authorship: entry.authorship ?? null
+        };
+      }),
       conservation_status: species.status?.code ?? null,
       image: species.image, rejected_images: species.rejectedImages,
       distribution_candidates: species.regionCandidates.map(({ id, name, records, countries }) => ({ id, name, records, countries: countries.map(country => country.name) })),
