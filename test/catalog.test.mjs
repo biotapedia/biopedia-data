@@ -44,6 +44,16 @@ test('generated indexes are current', () => {
   assert.doesNotThrow(() => syncIndexes(docs, { check: true }));
 });
 
+test('species index contains illustrated species only', () => {
+  const taxa = loadTaxa(docs);
+  const ids = JSON.parse(expectedIndexes(taxa).get('species.json')).ids;
+  assert.ok(ids.length > 6);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.ok(ids.every(id => taxa.get(id).rank === 'species' && taxa.get(id).image_url));
+  assert.ok(ids.includes('ailuropoda-melanoleuca'));
+  assert.ok(!ids.includes('panthera-leo-leo'));
+});
+
 test('issue payload becomes a validated Markdown taxon', () => {
   const payload = {
     parent_id: 'panthera',

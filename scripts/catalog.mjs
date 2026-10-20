@@ -201,6 +201,9 @@ export function expectedIndexes(taxa) {
   const sort = (a, b) => a.name_zh.localeCompare(b.name_zh, 'zh-Hans-CN') || a.id.localeCompare(b.id);
   const output = new Map();
   output.set('roots.json', serialize({ items: children.get(null).map(listing).sort(sort) }));
+  output.set('species.json', serialize({ ids: [...taxa.values()]
+    .filter(taxon => taxon.rank === 'species' && taxon.image_url)
+    .map(taxon => taxon.id).sort() }));
   for (const taxon of taxa.values()) {
     const items = children.get(taxon.id).map(listing).sort(sort);
     const pages = Math.max(1, Math.ceil(items.length / PAGE_SIZE));
@@ -220,6 +223,7 @@ export function expectedIndexes(taxa) {
 function existingIndexFiles(docsDirectory) {
   const found = new Set();
   if (fs.existsSync(path.join(docsDirectory, 'roots.json'))) found.add('roots.json');
+  if (fs.existsSync(path.join(docsDirectory, 'species.json'))) found.add('species.json');
   const base = path.join(docsDirectory, 'children');
   if (!fs.existsSync(base)) return found;
   function walk(directory) {
@@ -234,7 +238,8 @@ function existingIndexFiles(docsDirectory) {
 }
 
 export function syncIndexes(docsDirectory, { check = false } = {}) {
-  const expected = expectedIndexes(loadTaxa(docsDirectory));
+  const taxa = loadTaxa(docsDirectory);
+  const expected = expectedIndexes(taxa);
   const existing = existingIndexFiles(docsDirectory);
   const errors = [];
   for (const [relative, content] of expected) {
@@ -254,7 +259,7 @@ export function syncIndexes(docsDirectory, { check = false } = {}) {
     }
   }
   if (errors.length) throw new Error(errors.join('\n'));
-  return { taxa: loadTaxa(docsDirectory).size, files: expected.size };
+  return { taxa: taxa.size, files: expected.size };
 }
 
 export function createTaxonMarkdown(input) {
