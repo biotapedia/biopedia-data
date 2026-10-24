@@ -1,0 +1,107 @@
+{
+  "parent_id": "canidae",
+  "page": 1,
+  "total": 11,
+  "next": null,
+  "items": [
+    {
+      "id": "aecnocyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Aecnocyon",
+      "name_zh": "",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "cams",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Cams",
+      "name_zh": "",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "vulpes",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Vulpes",
+      "name_zh": "",
+      "image_url": null,
+      "child_count": 2
+    },
+    {
+      "id": "otocyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Otocyon",
+      "name_zh": "大耳狐属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "urocyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Urocyon",
+      "name_zh": "灰狐属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "dusicyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Dusicyon",
+      "name_zh": "南美胡狼属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "canis",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Canis",
+      "name_zh": "犬属",
+      "image_url": null,
+      "child_count": 6
+    },
+    {
+      "id": "cerdocyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Cerdocyon",
+      "name_zh": "食蟹狐属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "lycalopex",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Lycalopex",
+      "name_zh": "伪狐属",
+      "image_url": null,
+      "child_count": 2
+    },
+    {
+      "id": "eucyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Eucyon",
+      "name_zh": "真犬属",
+      "image_url": null,
+      "child_count": 1
+    },
+    {
+      "id": "chrysocyon",
+      "parent_id": "canidae",
+      "rank": "genus",
+      "scientific_name": "Chrysocyon",
+      "name_zh": "鬃狼属",
+      "image_url": null,
+      "child_count": 1
+    }
+  ]
+}

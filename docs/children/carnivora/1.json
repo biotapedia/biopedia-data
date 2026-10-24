@@ -1,7 +1,7 @@
 {
   "parent_id": "carnivora",
   "page": 1,
-  "total": 2,
+  "total": 3,
   "next": null,
   "items": [
     {
@@ -12,6 +12,15 @@
       "name_zh": "猫型亚目",
       "image_url": null,
       "child_count": 1
+    },
+    {
+      "id": "canidae",
+      "parent_id": "carnivora",
+      "rank": "family",
+      "scientific_name": "Canidae",
+      "name_zh": "犬科",
+      "image_url": null,
+      "child_count": 11
     },
     {
       "id": "ursidae",

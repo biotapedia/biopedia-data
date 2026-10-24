@@ -1,0 +1,18 @@
+{
+  "parent_id": "cams",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "cams-adustus",
+      "parent_id": "cams",
+      "rank": "species",
+      "scientific_name": "Cams adustus",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    }
+  ]
+}

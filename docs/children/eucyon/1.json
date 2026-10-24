@@ -1,0 +1,18 @@
+{
+  "parent_id": "eucyon",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "eucyon-kuta",
+      "parent_id": "eucyon",
+      "rank": "species",
+      "scientific_name": "Eucyon kuta",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    }
+  ]
+}

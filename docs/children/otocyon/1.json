@@ -1,0 +1,18 @@
+{
+  "parent_id": "otocyon",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "otocyon-megalotis",
+      "parent_id": "otocyon",
+      "rank": "species",
+      "scientific_name": "Otocyon megalotis",
+      "name_zh": "大耳狐",
+      "image_url": "https://upload.wikimedia.org/wikipedia/commons/8/83/Otocyon_megalotis_%28Namibia%29.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}

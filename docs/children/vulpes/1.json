@@ -1,0 +1,28 @@
+{
+  "parent_id": "vulpes",
+  "page": 1,
+  "total": 2,
+  "next": null,
+  "items": [
+    {
+      "id": "vulpes-flavescens",
+      "parent_id": "vulpes",
+      "rank": "species",
+      "scientific_name": "Vulpes flavescens",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    },
+    {
+      "id": "vulpes-qiuzhudingi",
+      "parent_id": "vulpes",
+      "rank": "species",
+      "scientific_name": "Vulpes qiuzhudingi",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    }
+  ]
+}

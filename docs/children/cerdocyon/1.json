@@ -1,0 +1,18 @@
+{
+  "parent_id": "cerdocyon",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "thous-azarae",
+      "parent_id": "cerdocyon",
+      "rank": "species",
+      "scientific_name": "Thous azarae",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    }
+  ]
+}

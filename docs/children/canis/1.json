@@ -1,0 +1,68 @@
+{
+  "parent_id": "canis",
+  "page": 1,
+  "total": 6,
+  "next": null,
+  "items": [
+    {
+      "id": "canis-accitanus",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis accitanus",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    },
+    {
+      "id": "canis-alopex",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis alopex",
+      "name_zh": "",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d2/Portrait_of_a_red_fox_in_Rautas_fj%C3%A4llurskog_%28cropped%29.jpg/1280px-Portrait_of_a_red_fox_in_Rautas_fj%C3%A4llurskog_%28cropped%29.jpg",
+      "conservation_status": "NE",
+      "child_count": 0
+    },
+    {
+      "id": "canis-adustus",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis adustus",
+      "name_zh": "侧纹胡狼",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/Lupulella_adusta_in_Kalabo_Zambia_01.jpeg/1280px-Lupulella_adusta_in_Kalabo_Zambia_01.jpeg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "canis-lycaon",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis lycaon",
+      "name_zh": "东加拿大狼",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3d/MC_Timberwolf.jpg/1280px-MC_Timberwolf.jpg",
+      "conservation_status": "NE",
+      "child_count": 0
+    },
+    {
+      "id": "canis-mesomelas",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis mesomelas",
+      "name_zh": "黑背胡狼",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9a/135_Black-backed_jackal_hunting_for_food_at_Cape_cross_Photo_by_Giles_Laurent.jpg/1280px-135_Black-backed_jackal_hunting_for_food_at_Cape_cross_Photo_by_Giles_Laurent.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "canis-latrans",
+      "parent_id": "canis",
+      "rank": "species",
+      "scientific_name": "Canis latrans",
+      "name_zh": "郊狼",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a2/Coyote2008.jpg/1280px-Coyote2008.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}

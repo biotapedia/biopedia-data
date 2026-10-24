@@ -1,0 +1,18 @@
+{
+  "parent_id": "aecnocyon",
+  "page": 1,
+  "total": 1,
+  "next": null,
+  "items": [
+    {
+      "id": "aecnocyon-ayersi",
+      "parent_id": "aecnocyon",
+      "rank": "species",
+      "scientific_name": "Aecnocyon ayersi",
+      "name_zh": "",
+      "image_url": null,
+      "conservation_status": "NE",
+      "child_count": 0
+    }
+  ]
+}

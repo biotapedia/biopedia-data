@@ -1,0 +1,28 @@
+{
+  "parent_id": "lycalopex",
+  "page": 1,
+  "total": 2,
+  "next": null,
+  "items": [
+    {
+      "id": "lycalopex-gymnocercus",
+      "parent_id": "lycalopex",
+      "rank": "species",
+      "scientific_name": "Lycalopex gymnocercus",
+      "name_zh": "河狐",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/45/Zoo_Am%C3%A9rica-side_view_of_fox.jpg/1280px-Zoo_Am%C3%A9rica-side_view_of_fox.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    },
+    {
+      "id": "lycalopex-culpaeus",
+      "parent_id": "lycalopex",
+      "rank": "species",
+      "scientific_name": "Lycalopex culpaeus",
+      "name_zh": "山狐",
+      "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/40/Pseudalopex_culpaeus.jpg/1280px-Pseudalopex_culpaeus.jpg",
+      "conservation_status": "LC",
+      "child_count": 0
+    }
+  ]
+}
